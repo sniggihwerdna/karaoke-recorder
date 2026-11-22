@@ -211,10 +211,12 @@
     <section class="card">
       <h2>Mixer</h2>
       <div class="body">
-        <div class="row"><label>Track</label><input id="trackVol" type="range" min="0" max="1.5" step="0.01"><output id="trackVolOut"></output></div>
+        <div class="row"><label>Track</label><input id="trackVol" type="range" min="0" max="2" step="0.01"><output id="trackVolOut"></output></div>
         <div class="row"><label>Voice</label><input id="voiceVol" type="range" min="0" max="3" step="0.01"><output id="voiceVolOut"></output></div>
-        <div class="row"><label>Timing</label><input id="latency" type="range" min="-300" max="700" step="5"><output id="latencyOut"></output></div>
-        <div class="hint">Timing lines your voice up with the track on playback.</div>
+        <div class="row"><label>Sync</label><input id="latency" type="range" min="-50" max="300" step="5"><output id="latencyOut"></output></div>
+        <div class="hint">Moves your voice earlier on playback. Adjust while a take plays; it's remembered.</div>
+        <div class="row"><label>Body</label><input id="warmth" type="range" min="0" max="1" step="0.01"><output id="warmthOut"></output></div>
+        <div class="row"><label>Reverb</label><input id="reverb" type="range" min="0" max="1" step="0.01"><output id="reverbOut"></output></div>
         <label class="check"><input id="autoNext" type="checkbox"> Auto-continue to the next song</label>
       </div>
     </section>
@@ -299,8 +301,9 @@ function takesFor(songId) {
 }
 
 /* ---------- settings ---------- */
-const settings = Object.assign({ trackVol: 0.8, voiceVol: 1.2, latency: 150, autoNext: false },
+const settings = Object.assign({ trackVol: 1.0, voiceVol: 1.2, latency: 150, autoNext: false, warmth: 0.6, reverb: 0.25 },
   JSON.parse(localStorage.getItem("sing-settings") || "{}"));
+if (settings.latency > 300) settings.latency = 300;
 const saveSettings = () => localStorage.setItem("sing-settings", JSON.stringify(settings));
 
 /* ---------- helpers ---------- */
@@ -539,7 +542,10 @@ async function sing() {
   }
   if (track.ended || track.currentTime >= (track.duration || 1) - 0.5) track.currentTime = 0;
   const mime = pickMime();
-  recorder = new MediaRecorder(micStream, mime ? { mimeType: mime } : undefined);
+  const opts = { audioBitsPerSecond: 256000 };
+  if (mime) opts.mimeType = mime;
+  try { recorder = new MediaRecorder(micStream, opts); }
+  catch (_) { recorder = new MediaRecorder(micStream, mime ? { mimeType: mime } : undefined); }
   chunks = [];
   recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
   recorder.onerror = e => endSinging("Recording error: " + ((e.error && e.error.message) || "unknown"));
@@ -556,7 +562,7 @@ async function sing() {
   recStart = track.currentTime;
   userStop = false; resumeTries = 0; stopReason = "";
   recorder.start(1000);      // save data every second so nothing is lost if iPadOS interrupts
-  track.volume = Math.min(1, settings.trackVol);
+  trackOut();
   mode = "singing";
   singStartedAt = performance.now();
   setButtons();
@@ -596,12 +602,33 @@ track.onended = async () => {
   } else if (mode === "track") { mode = "idle"; setButtons(); }
 };
 
+/* track output: through Web Audio so volume can go above 100% (with a limiter to prevent distortion) */
+let liveCtx = null, liveGain = null;
+function trackOut() {
+  if (liveCtx) { if (liveCtx.state !== "running") liveCtx.resume(); return; }
+  try {
+    liveCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = liveCtx.createMediaElementSource(track);
+    liveGain = liveCtx.createGain();
+    const lim = liveCtx.createDynamicsCompressor();
+    lim.threshold.value = -2; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.002; lim.release.value = 0.1;
+    src.connect(liveGain); liveGain.connect(lim); lim.connect(liveCtx.destination);
+    liveCtx.onstatechange = () => { if (liveCtx.state !== "running" && (mode === "singing" || mode === "track")) liveCtx.resume(); };
+    track.volume = 1;
+  } catch (_) { liveCtx = null; liveGain = null; }
+  setTrackLevel();
+}
+function setTrackLevel() {
+  if (liveGain) { track.volume = 1; liveGain.gain.value = settings.trackVol; }
+  else track.volume = Math.min(1, settings.trackVol);
+}
+
 /* plain track playback (no recording) */
 async function playTrack() {
   if (!cur) return;
   if (mode === "track") { track.pause(); mode = "idle"; setButtons(); return; }
   stopAll();
-  track.volume = Math.min(1, settings.trackVol);
+  trackOut();
   await track.play(); mode = "track"; setButtons();
 }
 
@@ -609,32 +636,79 @@ async function playTrack() {
 async function decode(ctx, blob, key) {
   if (key && decodedCache.has(key)) return decodedCache.get(key);
   const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
-  if (key) { decodedCache.clear(); decodedCache.set(key, buf); } // keep only the current song's track
+  if (key) {                                   // keep just a few decoded buffers in memory
+    if (decodedCache.size >= 3) decodedCache.delete(decodedCache.keys().next().value);
+    decodedCache.set(key, buf);
+  }
   return buf;
 }
-async function listenTake(take) {
+function makeImpulse(ctx, seconds = 2.2, decay = 3) {
+  const rate = ctx.sampleRate, len = Math.floor(rate * seconds);
+  const buf = ctx.createBuffer(2, len, rate);
+  for (let c = 0; c < 2; c++) {
+    const d = buf.getChannelData(c);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+  }
+  return buf;
+}
+/* vocal chain: low cut -> presence/body EQ -> compressor -> makeup gain -> dry + reverb */
+function buildVoiceChain(ctx, dest) {
+  const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 90;
+  const low = ctx.createBiquadFilter(); low.type = "peaking"; low.frequency.value = 220; low.Q.value = 0.8;
+  const pres = ctx.createBiquadFilter(); pres.type = "peaking"; pres.frequency.value = 3200; pres.Q.value = 0.9;
+  const air = ctx.createBiquadFilter(); air.type = "highshelf"; air.frequency.value = 9000;
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -26; comp.knee.value = 8; comp.attack.value = 0.005; comp.release.value = 0.18;
+  const makeup = ctx.createGain();
+  const vol = ctx.createGain();
+  const dry = ctx.createGain(), wet = ctx.createGain();
+  const verb = ctx.createConvolver(); verb.buffer = makeImpulse(ctx);
+  hp.connect(low); low.connect(pres); pres.connect(air); air.connect(comp); comp.connect(makeup); makeup.connect(vol);
+  vol.connect(dry); dry.connect(dest);
+  vol.connect(verb); verb.connect(wet); wet.connect(dest);
+  const chain = { input: hp, low, pres, air, comp, makeup, vol, dry, wet };
+  applyVoiceSettings(chain);
+  return chain;
+}
+function applyVoiceSettings(ch) {
+  const w = settings.warmth;               // 0 = raw recording, 1 = fully processed
+  ch.low.gain.value = 3 * w;
+  ch.pres.gain.value = 4 * w;
+  ch.air.gain.value = 3 * w;
+  ch.comp.ratio.value = 1 + 5 * w;
+  ch.makeup.gain.value = 1 + 1.2 * w;      // compression makes it quieter; bring it back up
+  ch.vol.gain.value = settings.voiceVol;
+  ch.dry.gain.value = 1;
+  ch.wet.gain.value = settings.reverb * 0.6;
+}
+async function listenTake(take, startAt) {
   if (!cur) return;
   if (!take) {
     const list = await takesFor(cur.id);
     take = list.sort((a, b) => b.created - a.created)[0];
     if (!take) { status("No takes yet for this song - tap Sing first."); return; }
   }
+  if (startAt == null) startAt = take.start;
   stopAll();
   status("Loading take…");
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
   await ctx.resume();
-  const [trk, voc] = await Promise.all([decode(ctx, cur.audio, cur.id), decode(ctx, take.blob)]);
-  const gT = ctx.createGain(), gV = ctx.createGain();
-  gT.gain.value = settings.trackVol; gV.gain.value = settings.voiceVol;
-  gT.connect(ctx.destination); gV.connect(ctx.destination);
+  const [trk, voc] = await Promise.all([decode(ctx, cur.audio, cur.id), decode(ctx, take.blob, "take:" + take.id)]);
+  const master = ctx.createDynamicsCompressor();
+  master.threshold.value = -2; master.knee.value = 0; master.ratio.value = 20; master.attack.value = 0.002; master.release.value = 0.1;
+  master.connect(ctx.destination);
+  const gT = ctx.createGain();
+  gT.gain.value = settings.trackVol; gT.connect(master);
+  const chain = buildVoiceChain(ctx, master);
   const sT = ctx.createBufferSource(), sV = ctx.createBufferSource();
-  sT.buffer = trk; sV.buffer = voc; sT.connect(gT); sV.connect(gV);
-  const when = ctx.currentTime + 0.15;
-  const lat = settings.latency / 1000;      // voice arrives this late, so skip its first part
-  sT.start(when, take.start);
-  if (lat >= 0) sV.start(when, lat); else sV.start(when - lat, 0);
-  sV.onended = () => { if (listen && listen.ctx === ctx) stopListening(); };
-  listen = { ctx, gT, gV, nodes: [sT, sV], startCtxTime: when, from: take.start };
+  sT.buffer = trk; sV.buffer = voc; sT.connect(gT); sV.connect(chain.input);
+  const when = ctx.currentTime + 0.12;
+  // where we are in the recording, minus the delay the voice was recorded with
+  const vOff = (startAt - take.start) + settings.latency / 1000;
+  sT.start(when, startAt);
+  if (vOff >= 0) sV.start(when, vOff); else sV.start(when - vOff, 0);
+  sV.onended = () => { if (listen && listen.ctx === ctx && ctx.currentTime > when + 0.5) stopListening(); };
+  listen = { ctx, gT, chain, nodes: [sT, sV], startCtxTime: when, from: startAt, take };
   mode = "listening"; setButtons(); status("Playing back take");
 }
 function stopListening() {
@@ -814,19 +888,29 @@ $("nextBtn").onclick = () => { stopAll(); next(); };
 $("prevBtn").onclick = () => { stopAll(); prev(); };
 
 /* ---------- mixer / settings ---------- */
+let syncTimer = null;
 function bindRange(id, key, fmtOut) {
   const el = $(id), out = $(id + "Out");
   el.value = settings[key]; out.textContent = fmtOut(settings[key]);
   el.oninput = () => {
     settings[key] = +el.value; out.textContent = fmtOut(settings[key]); saveSettings();
-    if (key === "trackVol") { track.volume = Math.min(1, settings.trackVol); if (listen) listen.gT.gain.value = settings.trackVol; }
-    if (key === "voiceVol" && listen) listen.gV.gain.value = settings.voiceVol;
+    if (key === "trackVol") { setTrackLevel(); if (listen) listen.gT.gain.value = settings.trackVol; }
+    if (listen && (key === "voiceVol" || key === "warmth" || key === "reverb")) applyVoiceSettings(listen.chain);
+    if (key === "latency" && listen) {             // restart playback from the same spot with the new sync
+      clearTimeout(syncTimer);
+      syncTimer = setTimeout(() => {
+        if (!listen) return;
+        const pos = listen.from + (listen.ctx.currentTime - listen.startCtxTime);
+        listenTake(listen.take, Math.max(listen.take.start, pos));
+      }, 250);
+    }
   };
 }
 bindRange("trackVol", "trackVol", v => Math.round(v * 100) + "%");
 bindRange("voiceVol", "voiceVol", v => Math.round(v * 100) + "%");
 bindRange("latency", "latency", v => v + " ms");
-$("latency").onchange = () => { if (mode === "listening") status("Timing changes apply when you play the take again."); };
+bindRange("warmth", "warmth", v => Math.round(v * 100) + "%");
+bindRange("reverb", "reverb", v => Math.round(v * 100) + "%");
 $("autoNext").checked = settings.autoNext;
 $("autoNext").onchange = e => { settings.autoNext = e.target.checked; saveSettings(); };
 
