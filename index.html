@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sing">
+<title>Sing</title>
+<style>
+  :root {
+    --bg: #0d0e10; --panel: #17191d; --panel2: #1f2227; --line: #2b2f36; --text: #eceef1; --dim: #8a909a;
+    --accent: #e8a33d; --rec: #e5484d; --ok: #3f9b52; --radius: 16px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 17px/1.35 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; overscroll-behavior: none; }
+  body { display: flex; flex-direction: column;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  button { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 12px; padding: 10px 16px; cursor: pointer; }
+  button:active { transform: scale(0.97); }
+  .hidden { display: none !important; }
+
+  /* app bar */
+  header { display: flex; gap: 10px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 21px; margin: 0 auto 0 0; letter-spacing: .04em; }
+  header h1 span { color: var(--accent); }
+
+  /* layout: three panels on wide screens */
+  #app { flex: 1; min-height: 0; display: grid; gap: 12px; padding: 12px;
+    grid-template-columns: 290px minmax(0, 1fr) 290px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .card > h2 { margin: 0; padding: 12px 16px 10px; font-size: 12px; font-weight: 700; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--dim); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
+  .card > h2 .count { margin-left: auto; font-weight: 500; letter-spacing: 0; text-transform: none; }
+  .stack { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+
+  /* library */
+  #library { min-height: 0; }
+  #search { margin: 10px 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font: inherit; font-size: 16px; }
+  #songList { flex: 1; overflow-y: auto; margin: 0; padding: 0 0 20px; list-style: none; }
+  #songList li { padding: 11px 16px; border-bottom: 1px solid #22252b; cursor: pointer; font-size: 16px; }
+  #songList li .artist { display: block; color: var(--dim); font-size: 13px; margin-top: 1px; }
+  #songList li.sel { background: #2a2416; box-shadow: inset 3px 0 0 var(--accent); }
+  #songList li.letter { position: sticky; top: 0; background: var(--panel); color: var(--accent); font-weight: 700;
+    padding: 5px 16px; cursor: default; font-size: 13px; border-bottom: 1px solid var(--line); z-index: 1; }
+  .empty { color: var(--dim); padding: 28px 20px !important; cursor: default !important; line-height: 1.5; }
+
+  /* center: song */
+  #player { gap: 12px; }
+  #songHead { flex-direction: row; align-items: center; gap: 12px; padding: 12px 16px; }
+  #pTitle { flex: 1; min-width: 0; }
+  #pTitle .t { font-size: 22px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #pTitle .a { color: var(--dim); font-size: 15px; }
+  #lyricsCard { flex: 1; position: relative; }
+  #lyrics { flex: 1; overflow-y: auto; padding: 28vh 28px; text-align: center; scroll-behavior: smooth;
+    -webkit-mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent); mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent); }
+  #lyrics p { margin: 0; padding: 7px 0; font-size: 30px; font-weight: 650; color: #5a5f68; transition: color .2s, transform .2s; cursor: pointer; }
+  #lyrics p.now { color: var(--text); transform: scale(1.05); }
+  #lyrics p.past { color: #3a3e45; }
+  #lyrics .plain { white-space: pre-wrap; font-size: 22px; color: var(--text); text-align: left; }
+  #lyrics .note { font-size: 18px; color: var(--dim); }
+
+  /* transport */
+  #transportCard { padding: 14px 18px 12px; }
+  #progressRow { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  #progress { flex: 1; height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; position: relative; cursor: pointer; }
+  #progress div { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 5px; }
+  #transport { display: flex; justify-content: center; align-items: center; gap: 14px; margin-top: 14px; }
+  #transport button { flex-shrink: 0; white-space: nowrap; }
+  #transport .icon { width: 54px; height: 54px; border-radius: 50%; padding: 0; font-size: 18px; }
+  #transport .pill { min-width: 112px; padding: 0 18px; height: 54px; border-radius: 27px; }
+  #singBtn { width: 84px; height: 84px; border-radius: 50%; padding: 0; font-size: 17px; font-weight: 800;
+    background: var(--rec); border: 4px solid #3a1416; color: #fff; box-shadow: 0 0 0 1px var(--rec); }
+  #singBtn.on { animation: pulse 1.4s infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 10px rgba(229,72,77,.18); } }
+  #playBtn.on, #listenBtn.on { background: var(--accent); color: #1a1200; border-color: var(--accent); }
+  #status { text-align: center; color: var(--dim); min-height: 20px; font-size: 14px; margin-top: 8px; }
+
+  /* right: mixer / takes / settings */
+  #side { min-height: 0; }
+  .body { padding: 12px 16px 14px; }
+  .row { display: flex; align-items: center; gap: 10px; margin: 6px 0 12px; }
+  .row label { width: 50px; flex-shrink: 0; color: var(--dim); font-size: 14px; }
+  .row input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+  .row output { width: 58px; flex-shrink: 0; white-space: nowrap; font-size: 13px !important; text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); font-size: 14px; }
+  .hint { color: var(--dim); font-size: 13px; margin: -6px 0 8px; line-height: 1.4; }
+  .check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--dim); }
+  .check input { margin-top: 3px; accent-color: var(--accent); }
+  #takesCard { flex: 1; }
+  #takes { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+  #takes li { display: flex; align-items: center; gap: 6px; padding: 9px 12px 9px 16px; border-bottom: 1px solid #22252b; font-size: 14px; }
+  #takes li span { flex: 1; color: var(--dim); }
+  #takes li button { padding: 6px 10px; font-size: 13px; border-radius: 8px; }
+  #takes li.none { color: var(--dim); padding: 16px; }
+  #delSongBtn { width: 100%; color: #e8888b; background: transparent; font-size: 14px; }
+
+  .placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--dim); text-align: center; padding: 40px; font-size: 18px; }
+
+  /* standard iPad landscape: slimmer side panels */
+  @media (max-width: 1300px) {
+    #app { grid-template-columns: 250px minmax(0, 1fr) 260px; }
+    #transport { gap: 10px; }
+  }
+  /* portrait iPad: songs + song; mixer/takes go under the transport */
+  @media (max-width: 1000px) {
+    #app { grid-template-columns: 250px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+    #library { grid-row: 1 / 3; }
+    #side { flex-direction: row; align-items: stretch; }
+    #side > .card { flex: 1; }
+    #side .hint { display: none; }
+    #takes { max-height: 150px; }
+  }
+  /* narrow (portrait phone): one panel at a time */
+  @media (max-width: 760px) {
+    #app { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); padding: 8px; }
+    #library { grid-row: auto; }
+    body[data-view="library"] #player, body[data-view="library"] #side { display: none; }
+    body[data-view="player"] #library { display: none; }
+    body[data-view="player"] #app { grid-template-rows: minmax(0, 1fr) auto; }
+    #side { flex-direction: column; }
+    #side > .card { max-height: none; }
+    #lyrics p { font-size: 24px; }
+    #app { grid-template-columns: minmax(0, 1fr); }
+    #player { min-height: 0; }
+    #transport { gap: 8px; flex-wrap: wrap; }
+    #restartBtn { display: none; }
+    #transport .icon { width: 44px; height: 44px; }
+    #transport .pill { min-width: 0; height: 44px; padding: 0 12px; font-size: 15px; }
+    #singBtn { width: 68px; height: 68px; font-size: 14px; }
+    body[data-view="player"] #side { max-height: 32vh; overflow-y: auto; }
+    #side > .card { flex: none; }
+    header h1 { font-size: 19px; }
+    header button { padding: 8px 12px; font-size: 15px; }
+  }
+  @media (min-width: 761px) { #backBtn { display: none; } }
+
+  /* drive mode */
+  #drive { position: fixed; inset: 0; background: #000; z-index: 10; display: grid;
+    grid-template-rows: auto 1fr 1fr auto; gap: 14px;
+    padding: calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 16px); }
+  #dTop { display: flex; align-items: center; gap: 12px; }
+  #dSong { flex: 1; font-size: 26px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #drive .big { font-size: 40px; font-weight: 800; border-radius: 24px; }
+  #dSing { background: var(--ok); border-color: var(--ok); color: #fff; }
+  #dSing.on { background: var(--rec); border-color: var(--rec); }
+  #dRow { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  #dStatus { text-align: center; font-size: 20px; color: var(--dim); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Sing<span>.</span></h1>
+  <button id="importBtn">＋ Import</button>
+  <button id="driveBtn">Drive mode</button>
+  <input id="fileInput" type="file" multiple accept="audio/*,.mp3,.m4a,.wav,.aac,.lrc,.txt" class="hidden">
+</header>
+
+<main id="app">
+  <!-- LEFT: songs -->
+  <section id="library" class="card">
+    <h2>Songs <span class="count" id="songCount"></span></h2>
+    <input id="search" type="search" placeholder="Search" autocomplete="off">
+    <ul id="songList"></ul>
+  </section>
+
+  <!-- CENTER: current song -->
+  <section id="player" class="stack">
+    <div id="songHead" class="card">
+      <button id="backBtn">‹ Songs</button>
+      <div id="pTitle"><div class="t">No song selected</div><div class="a">Pick a song from the list</div></div>
+    </div>
+    <div id="lyricsCard" class="card">
+      <div id="lyrics"><div class="placeholder">Lyrics appear here</div></div>
+    </div>
+    <div id="transportCard" class="card">
+      <div id="progressRow"><span id="tNow">0:00</span><div id="progress"><div></div></div><span id="tDur">0:00</span></div>
+      <div id="transport">
+        <button id="prevBtn" class="icon" aria-label="Previous song">⏮</button>
+        <button id="restartBtn" class="icon" aria-label="Back to start">↺</button>
+        <button id="playBtn" class="pill">▶ Track</button>
+        <button id="singBtn" aria-label="Sing">SING</button>
+        <button id="listenBtn" class="pill">Listen back</button>
+        <button id="nextBtn" class="icon" aria-label="Next song">⏭</button>
+      </div>
+      <div id="status"></div>
+    </div>
+  </section>
+
+  <!-- RIGHT: mixer, takes, settings -->
+  <aside id="side" class="stack">
+    <section class="card">
+      <h2>Mixer</h2>
+      <div class="body">
+        <div class="row"><label>Track</label><input id="trackVol" type="range" min="0" max="1.5" step="0.01"><output id="trackVolOut"></output></div>
+        <div class="row"><label>Voice</label><input id="voiceVol" type="range" min="0" max="3" step="0.01"><output id="voiceVolOut"></output></div>
+        <div class="row"><label>Timing</label><input id="latency" type="range" min="-300" max="700" step="5"><output id="latencyOut"></output></div>
+        <div class="hint">Timing lines your voice up with the track on playback.</div>
+        <label class="check"><input id="autoNext" type="checkbox"> Auto-continue to the next song</label>
+      </div>
+    </section>
+    <section id="takesCard" class="card">
+      <h2>Takes <span class="count" id="takeCount"></span></h2>
+      <ul id="takes"><li class="none">Pick a song</li></ul>
+      <div class="body" style="padding-top:8px"><button id="delSongBtn">Remove song from app</button></div>
+    </section>
+  </aside>
+</main>
+
+<!-- DRIVE MODE -->
+<section id="drive" class="hidden">
+  <div id="dTop">
+    <div id="dSong"></div>
+    <button id="dExit">Exit</button>
+  </div>
+  <button id="dSing" class="big">SING</button>
+  <div id="dRow">
+    <button id="dPrev" class="big">⏮</button>
+    <button id="dListen" class="big">LISTEN</button>
+    <button id="dNext" class="big">⏭</button>
+  </div>
+  <div id="dStatus">Headset: ▶ = sing / stop · ⏭ ⏮ = change song</div>
+</section>
+
+<audio id="track" preload="auto" playsinline></audio>
+
+<script>
+"use strict";
+/* ---------- storage (IndexedDB) ---------- */
+const DB_NAME = "sing-app", DB_VER = 1;
+let db;
+function openDB() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(DB_NAME, DB_VER);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      if (!d.objectStoreNames.contains("songs")) d.createObjectStore("songs", { keyPath: "id" });
+      if (!d.objectStoreNames.contains("takes")) {
+        const t = d.createObjectStore("takes", { keyPath: "id", autoIncrement: true });
+        t.createIndex("songId", "songId");
+      }
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+function tx(store, mode, fn) {
+  return new Promise((res, rej) => {
+    const t = db.transaction(store, mode), s = t.objectStore(store);
+    let out; const r = fn(s);
+    if (r) r.onsuccess = () => { out = r.result; };
+    t.oncomplete = () => res(out);
+    t.onerror = () => rej(t.error);
+    t.onabort = () => rej(t.error);
+  });
+}
+const getSong = id => tx("songs", "readonly", s => s.get(id));
+const putSong = song => tx("songs", "readwrite", s => s.put(song));
+const delSong = id => tx("songs", "readwrite", s => s.delete(id));
+const putTake = take => tx("takes", "readwrite", s => s.add(take));
+const delTake = id => tx("takes", "readwrite", s => s.delete(id));
+function allSongMeta() {  // names only, without loading audio into memory
+  return tx("songs", "readonly", s => s.getAllKeys());
+}
+function takesFor(songId) {
+  return tx("takes", "readonly", s => s.index("songId").getAll(songId));
+}
+
+/* ---------- settings ---------- */
+const settings = Object.assign({ trackVol: 0.8, voiceVol: 1.2, latency: 150, autoNext: false },
+  JSON.parse(localStorage.getItem("sing-settings") || "{}"));
+const saveSettings = () => localStorage.setItem("sing-settings", JSON.stringify(settings));
+
+/* ---------- helpers ---------- */
+const $ = id => document.getElementById(id);
+const fmt = t => { t = Math.max(0, t || 0); return Math.floor(t / 60) + ":" + String(Math.floor(t % 60)).padStart(2, "0"); };
+const baseName = n => n.replace(/\.[^.]+$/, "");
+function displayName(id) {
+  // "Artist - Title" -> "Title — Artist" so the list reads by song title
+  const i = id.indexOf(" - ");
+  return i > 0 ? id.slice(i + 3) + " — " + id.slice(0, i) : id;
+}
+function splitName(id) {
+  const i = id.indexOf(" - ");
+  return i > 0 ? [id.slice(i + 3), id.slice(0, i)] : [id, ""];
+}
+function sortKey(id) { return displayName(id).toLowerCase().replace(/^(the|a|an) /, ""); }
+function parseLRC(text) {
+  const lines = [];
+  for (const raw of (text || "").split(/\r?\n/)) {
+    const stamps = [...raw.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
+    if (!stamps.length) continue;
+    const words = raw.replace(/\[[^\]]*\]/g, "").trim();
+    for (const m of stamps) lines.push({ t: +m[1] * 60 + +m[2], text: words });
+  }
+  return lines.sort((a, b) => a.t - b.t);
+}
+function status(msg) { $("status").textContent = msg; $("dStatus").textContent = msg; }
+
+/* ---------- library ---------- */
+let songIds = [];       // sorted, all
+let visibleIds = [];    // after search filter
+async function refreshLibrary() {
+  songIds = (await allSongMeta()).sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
+  renderList();
+}
+function renderList() {
+  const q = $("search").value.trim().toLowerCase();
+  visibleIds = songIds.filter(id => !q || id.toLowerCase().includes(q));
+  $("songCount").textContent = songIds.length ? (q ? `${visibleIds.length} of ${songIds.length}` : songIds.length) : "";
+  const ul = $("songList"); ul.innerHTML = "";
+  if (!songIds.length) {
+    ul.innerHTML = '<li class="empty">No songs yet.<br><br>Tap <b>Import</b>, open your Karaoke Library ▸ <b>No Vocals</b> folder in Files, tap <b>Select</b> ▸ <b>Select All</b>, then <b>Open</b>.<br><br>Including the .lrc files gives you scrolling lyrics.</li>';
+    return;
+  }
+  let letter = "";
+  for (const id of visibleIds) {
+    const L = (sortKey(id)[0] || "#").toUpperCase();
+    const head = /[A-Z]/.test(L) ? L : "#";
+    if (head !== letter) {
+      letter = head;
+      const h = document.createElement("li"); h.className = "letter"; h.textContent = head; ul.appendChild(h);
+    }
+    const li = document.createElement("li");
+    const [t, a] = splitName(id);
+    li.textContent = t;
+    if (a) { const s = document.createElement("span"); s.className = "artist"; s.textContent = a; li.appendChild(s); }
+    li.dataset.id = id;
+    if (cur && cur.id === id) li.classList.add("sel");
+    li.onclick = () => openSong(id);
+    ul.appendChild(li);
+  }
+}
+$("search").oninput = renderList;
+
+/* ---------- import ---------- */
+$("importBtn").onclick = () => $("fileInput").click();
+$("fileInput").onchange = async e => {
+  const files = [...e.target.files];
+  e.target.value = "";
+  if (!files.length) return;
+  const audio = files.filter(f => /\.(mp3|m4a|wav|aac|aif|aiff|ogg)$/i.test(f.name) || f.type.startsWith("audio/"));
+  const lrcs = files.filter(f => /\.(lrc|txt)$/i.test(f.name));
+  let n = 0;
+  for (const f of audio) {
+    const id = baseName(f.name);
+    const existing = await getSong(id);
+    await putSong(Object.assign(existing || { id, lrc: "" }, { id, audio: f, type: f.type || "audio/mpeg" }));
+    n++;
+  }
+  let l = 0;
+  for (const f of lrcs) {
+    const id = baseName(f.name);
+    const s = await getSong(id);
+    if (s) { s.lrc = await f.text(); s.lrcIsPlain = /\.txt$/i.test(f.name); await putSong(s); l++; }
+  }
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+  await refreshLibrary();
+  alert(`Imported ${n} song${n === 1 ? "" : "s"}` + (l ? ` and lyrics for ${l}.` : "."));
+};
+
+/* ---------- player ---------- */
+const track = $("track");
+let cur = null;           // current song record
+let lrcLines = [];
+let lyricEls = [];
+let micStream = null, recorder = null, recStart = 0, chunks = [];
+let mode = "idle";        // idle | track | singing | listening
+let listen = null;        // { ctx, nodes, startCtxTime, from }
+const decodedCache = new Map();
+
+function showView(name) { document.body.dataset.view = name; }
+document.body.dataset.view = "library";
+function markSelected() {
+  document.querySelectorAll("#songList li.sel").forEach(el => el.classList.remove("sel"));
+  if (!cur) return;
+  const el = [...document.querySelectorAll("#songList li")].find(li => li.dataset.id === cur.id);
+  if (el) { el.classList.add("sel"); el.scrollIntoView({ block: "nearest" }); }
+}
+$("backBtn").onclick = () => { stopAll(); showView("library"); };
+
+async function openSong(id, { keepView = false } = {}) {
+  stopAll();
+  const s = await getSong(id);
+  if (!s) return;
+  cur = s;
+  if (track.src) URL.revokeObjectURL(track.src);
+  track.src = URL.createObjectURL(s.audio);
+  track.currentTime = 0;
+  const [t, a] = splitName(id);
+  $("pTitle").querySelector(".t").textContent = t;
+  $("pTitle").querySelector(".a").textContent = a || " ";
+  markSelected();
+  $("dSong").textContent = displayName(id);
+  renderLyrics();
+  await renderTakes();
+  setMediaSession();
+  if (!keepView) showView("player");
+  status("");
+  updateTime(0);
+}
+
+function renderLyrics() {
+  const box = $("lyrics"); box.innerHTML = ""; lyricEls = [];
+  lrcLines = cur.lrcIsPlain ? [] : parseLRC(cur.lrc);
+  if (lrcLines.length) {
+    for (const ln of lrcLines) {
+      const p = document.createElement("p");
+      p.textContent = ln.text || "♪";
+      p.onclick = () => { if (mode === "idle" || mode === "track") { track.currentTime = ln.t; updateTime(ln.t); } };
+      box.appendChild(p); lyricEls.push(p);
+    }
+  } else if (cur.lrc) {
+    const d = document.createElement("div"); d.className = "plain"; d.textContent = cur.lrc; box.appendChild(d);
+    box.style.padding = "20px 24px";
+    return;
+  } else {
+    box.innerHTML = '<div class="placeholder">No lyrics for this song.<br>Import its .lrc file to see them here.</div>';
+    box.style.padding = "0";
+    return;
+  }
+  box.style.padding = "";
+}
+
+let lastIdx = -1;
+function updateTime(t) {
+  const dur = track.duration || (cur && cur.duration) || 0;
+  $("tNow").textContent = fmt(t); $("tDur").textContent = fmt(dur);
+  $("progress").firstElementChild.style.width = dur ? (100 * t / dur) + "%" : "0";
+  if (!lrcLines.length) return;
+  let i = -1;
+  for (let k = 0; k < lrcLines.length; k++) { if (lrcLines[k].t <= t + 0.15) i = k; else break; }
+  if (i !== lastIdx) {
+    lyricEls.forEach((el, k) => { el.classList.toggle("now", k === i); el.classList.toggle("past", k < i); });
+    if (i >= 0) lyricEls[i].scrollIntoView({ block: "center", behavior: "smooth" });
+    lastIdx = i;
+  }
+}
+function tick() {
+  if (mode === "track" || mode === "singing") updateTime(track.currentTime);
+  else if (mode === "listening" && listen) updateTime(listen.from + (listen.ctx.currentTime - listen.startCtxTime));
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+$("progress").onclick = e => {
+  if (mode === "singing" || mode === "listening") return;
+  const r = e.currentTarget.getBoundingClientRect();
+  const t = (e.clientX - r.left) / r.width * (track.duration || 0);
+  track.currentTime = t; updateTime(t);
+};
+$("restartBtn").onclick = () => { if (mode === "singing") return; stopAll(); track.currentTime = 0; updateTime(0); lastIdx = -1; };
+
+/* ---------- singing (record voice only; track plays in headphones) ---------- */
+async function getMic() {
+  if (micStream && micStream.active) return micStream;
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+  });
+  return micStream;
+}
+function pickMime() {
+  for (const m of ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"]) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return "";
+}
+async function sing() {
+  if (!cur) return;
+  if (mode === "singing") return stopSinging();
+  stopAll();
+  try { await getMic(); }
+  catch (err) { status("Microphone not available: " + err.message); return; }
+  if (track.ended || track.currentTime >= (track.duration || 1) - 0.5) track.currentTime = 0;
+  const mime = pickMime();
+  recorder = new MediaRecorder(micStream, mime ? { mimeType: mime } : undefined);
+  chunks = [];
+  recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  const songId = cur.id;
+  recorder.onstop = async () => {
+    const blob = new Blob(chunks, { type: recorder.mimeType || mime || "audio/mp4" });
+    if (blob.size > 1000) {
+      await putTake({ songId, start: recStart, blob, created: Date.now() });
+      if (cur && cur.id === songId) await renderTakes();
+      status("Take saved.");
+    }
+  };
+  recStart = track.currentTime;
+  recorder.start();
+  track.volume = Math.min(1, settings.trackVol);
+  await track.play();
+  mode = "singing";
+  setButtons();
+  status("Recording…");
+}
+function stopSinging() {
+  if (mode !== "singing") return;
+  track.pause();
+  try { recorder && recorder.state !== "inactive" && recorder.stop(); } catch (_) {}
+  mode = "idle";
+  setButtons();
+}
+track.onended = async () => {
+  if (mode === "singing") {
+    stopSinging();
+    if (settings.autoNext) { status("Next song in 3 seconds…"); setTimeout(async () => { await next(); sing(); }, 3000); }
+  } else if (mode === "track") { mode = "idle"; setButtons(); }
+};
+
+/* plain track playback (no recording) */
+async function playTrack() {
+  if (!cur) return;
+  if (mode === "track") { track.pause(); mode = "idle"; setButtons(); return; }
+  stopAll();
+  track.volume = Math.min(1, settings.trackVol);
+  await track.play(); mode = "track"; setButtons();
+}
+
+/* ---------- listen back: mix of track + voice, from where the take started ---------- */
+async function decode(ctx, blob, key) {
+  if (key && decodedCache.has(key)) return decodedCache.get(key);
+  const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
+  if (key) { decodedCache.clear(); decodedCache.set(key, buf); } // keep only the current song's track
+  return buf;
+}
+async function listenTake(take) {
+  if (!cur) return;
+  if (!take) {
+    const list = await takesFor(cur.id);
+    take = list.sort((a, b) => b.created - a.created)[0];
+    if (!take) { status("No takes yet for this song - tap Sing first."); return; }
+  }
+  stopAll();
+  status("Loading take…");
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  await ctx.resume();
+  const [trk, voc] = await Promise.all([decode(ctx, cur.audio, cur.id), decode(ctx, take.blob)]);
+  const gT = ctx.createGain(), gV = ctx.createGain();
+  gT.gain.value = settings.trackVol; gV.gain.value = settings.voiceVol;
+  gT.connect(ctx.destination); gV.connect(ctx.destination);
+  const sT = ctx.createBufferSource(), sV = ctx.createBufferSource();
+  sT.buffer = trk; sV.buffer = voc; sT.connect(gT); sV.connect(gV);
+  const when = ctx.currentTime + 0.15;
+  const lat = settings.latency / 1000;      // voice arrives this late, so skip its first part
+  sT.start(when, take.start);
+  if (lat >= 0) sV.start(when, lat); else sV.start(when - lat, 0);
+  sV.onended = () => { if (listen && listen.ctx === ctx) stopListening(); };
+  listen = { ctx, gT, gV, nodes: [sT, sV], startCtxTime: when, from: take.start };
+  mode = "listening"; setButtons(); status("Playing back take");
+}
+function stopListening() {
+  if (!listen) return;
+  try { listen.nodes.forEach(n => n.stop()); } catch (_) {}
+  listen.ctx.close();
+  listen = null;
+  if (mode === "listening") { mode = "idle"; setButtons(); status(""); }
+}
+function stopAll() {
+  if (mode === "singing") stopSinging();
+  if (mode === "listening") stopListening();
+  if (mode === "track") { track.pause(); mode = "idle"; }
+  setButtons();
+}
+
+/* ---------- takes list ---------- */
+async function renderTakes() {
+  const ul = $("takes"); ul.innerHTML = "";
+  if (!cur) { ul.innerHTML = '<li class="none">Pick a song</li>'; $("takeCount").textContent = ""; return; }
+  const list = (await takesFor(cur.id)).sort((a, b) => b.created - a.created);
+  $("takeCount").textContent = list.length || "";
+  if (!list.length) { ul.innerHTML = '<li class="none">No takes yet. Tap SING to record one.</li>'; return; }
+  for (const t of list) {
+    const li = document.createElement("li");
+    const d = new Date(t.created);
+    li.innerHTML = `<span>${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · from ${fmt(t.start)}</span>`;
+    const play = document.createElement("button"); play.textContent = "▶"; play.onclick = () => listenTake(t);
+    const share = document.createElement("button"); share.textContent = "Save";
+    share.onclick = () => saveTake(t);
+    const del = document.createElement("button"); del.textContent = "✕";
+    del.onclick = async () => { if (confirm("Delete this take?")) { await delTake(t.id); renderTakes(); } };
+    li.append(play, share, del); ul.appendChild(li);
+  }
+}
+async function saveTake(t) {
+  const ext = (t.blob.type || "").includes("webm") ? "webm" : "m4a";
+  const file = new File([t.blob], `${cur.id} - vocal take.${ext}`, { type: t.blob.type });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); } catch (_) {}
+  } else {
+    const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; a.click();
+  }
+}
+
+$("delSongBtn").onclick = async () => {
+  if (!cur || !confirm(`Remove "${displayName(cur.id)}" and its takes from the app?`)) return;
+  stopAll();
+  for (const t of await takesFor(cur.id)) await delTake(t.id);
+  await delSong(cur.id);
+  cur = null; await refreshLibrary(); showView("library");
+  $("pTitle").querySelector(".t").textContent = "No song selected";
+  $("pTitle").querySelector(".a").textContent = "Pick a song from the list";
+  $("lyrics").innerHTML = '<div class="placeholder">Lyrics appear here</div>'; renderTakes();
+};
+
+/* ---------- song navigation ---------- */
+function neighbor(step) {
+  const list = visibleIds.length ? visibleIds : songIds;
+  if (!list.length) return null;
+  const i = cur ? list.indexOf(cur.id) : -1;
+  return list[(i + step + list.length) % list.length];
+}
+async function next() { const id = neighbor(1); if (id) await openSong(id, { keepView: true }); }
+async function prev() {
+  if (mode !== "singing" && track.currentTime > 5) { track.currentTime = 0; updateTime(0); return; }
+  const id = neighbor(-1); if (id) await openSong(id, { keepView: true });
+}
+
+/* ---------- buttons ---------- */
+function setButtons() {
+  const singing = mode === "singing";
+  $("singBtn").textContent = singing ? "STOP" : "SING";
+  $("singBtn").classList.toggle("on", singing);
+  $("playBtn").textContent = mode === "track" ? "❚❚ Track" : "▶ Track";
+  $("playBtn").classList.toggle("on", mode === "track");
+  $("listenBtn").textContent = mode === "listening" ? "■ Stop" : "Listen back";
+  $("listenBtn").classList.toggle("on", mode === "listening");
+  $("dSing").textContent = singing ? "STOP" : "SING";
+  $("dSing").classList.toggle("on", singing);
+  $("dListen").textContent = mode === "listening" ? "STOP" : "LISTEN";
+  if ("mediaSession" in navigator) navigator.mediaSession.playbackState = (singing || mode === "track" || mode === "listening") ? "playing" : "paused";
+}
+$("singBtn").onclick = sing;
+$("playBtn").onclick = playTrack;
+$("listenBtn").onclick = () => mode === "listening" ? stopListening() : listenTake();
+$("nextBtn").onclick = () => { stopAll(); next(); };
+$("prevBtn").onclick = () => { stopAll(); prev(); };
+
+/* ---------- mixer / settings ---------- */
+function bindRange(id, key, fmtOut) {
+  const el = $(id), out = $(id + "Out");
+  el.value = settings[key]; out.textContent = fmtOut(settings[key]);
+  el.oninput = () => {
+    settings[key] = +el.value; out.textContent = fmtOut(settings[key]); saveSettings();
+    if (key === "trackVol") { track.volume = Math.min(1, settings.trackVol); if (listen) listen.gT.gain.value = settings.trackVol; }
+    if (key === "voiceVol" && listen) listen.gV.gain.value = settings.voiceVol;
+  };
+}
+bindRange("trackVol", "trackVol", v => Math.round(v * 100) + "%");
+bindRange("voiceVol", "voiceVol", v => Math.round(v * 100) + "%");
+bindRange("latency", "latency", v => v + " ms");
+$("latency").onchange = () => { if (mode === "listening") status("Timing changes apply when you play the take again."); };
+$("autoNext").checked = settings.autoNext;
+$("autoNext").onchange = e => { settings.autoNext = e.target.checked; saveSettings(); };
+
+/* ---------- headset / steering-wheel buttons ---------- */
+function setMediaSession() {
+  if (!("mediaSession" in navigator) || !cur) return;
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: displayName(cur.id), artist: "Sing" });
+    navigator.mediaSession.setActionHandler("play", () => { mode === "singing" ? null : sing(); });
+    navigator.mediaSession.setActionHandler("pause", () => { if (mode === "singing") stopSinging(); else stopAll(); });
+    navigator.mediaSession.setActionHandler("nexttrack", () => { stopAll(); next(); });
+    navigator.mediaSession.setActionHandler("previoustrack", () => { stopAll(); prev(); });
+  } catch (_) {}
+}
+
+/* ---------- drive mode ---------- */
+let wakeLock = null;
+async function enterDrive() {
+  if (!cur) {
+    const id = visibleIds[0] || songIds[0];
+    if (!id) { alert("Import some songs first."); return; }
+    await openSong(id, { keepView: true });
+  }
+  $("drive").classList.remove("hidden");
+  try { wakeLock = await navigator.wakeLock.request("screen"); } catch (_) {}
+  status("Headset: ▶ = sing / stop · ⏭ ⏮ = change song");
+}
+function exitDrive() {
+  $("drive").classList.add("hidden");
+  try { wakeLock && wakeLock.release(); } catch (_) {}
+  wakeLock = null;
+  if (cur) showView("player");
+}
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "visible" && !$("drive").classList.contains("hidden")) {
+    try { wakeLock = await navigator.wakeLock.request("screen"); } catch (_) {}
+  }
+});
+$("driveBtn").onclick = enterDrive;
+$("dExit").onclick = exitDrive;
+$("dSing").onclick = sing;
+$("dListen").onclick = () => mode === "listening" ? stopListening() : listenTake();
+$("dNext").onclick = () => { stopAll(); next(); };
+$("dPrev").onclick = () => { stopAll(); prev(); };
+
+/* ---------- start ---------- */
+openDB().then(d => { db = d; refreshLibrary(); }).catch(err => {
+  document.body.innerHTML = "<p style='padding:24px'>Storage unavailable: " + err.message + "</p>";
+});
+</script>
+</body>
+</html>
