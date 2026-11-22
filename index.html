@@ -139,6 +139,19 @@
   }
   @media (min-width: 761px) { #backBtn { display: none; } }
 
+  /* lyrics finder */
+  #lyrBtn { white-space: nowrap; }
+  #finder { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 20; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  #finderBox { width: min(620px, 100%); max-height: 80vh; }
+  #finderBox h2 .x { margin-left: auto; padding: 4px 12px; text-transform: none; letter-spacing: 0; }
+  #fForm { display: flex; gap: 8px; padding: 12px 16px; }
+  #fQuery { flex: 1; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+  #fResults { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
+  #fResults li { padding: 11px 16px; border-top: 1px solid #22252b; cursor: pointer; }
+  #fResults li .m { color: var(--dim); font-size: 13px; }
+  #fResults li.good .m b { color: var(--ok); }
+  #fResults li.msg { color: var(--dim); cursor: default; }
+
   /* drive mode */
   #drive { position: fixed; inset: 0; background: #000; z-index: 10; display: grid;
     grid-template-rows: auto 1fr 1fr auto; gap: 14px;
@@ -174,6 +187,7 @@
     <div id="songHead" class="card">
       <button id="backBtn">‹ Songs</button>
       <div id="pTitle"><div class="t">No song selected</div><div class="a">Pick a song from the list</div></div>
+      <button id="lyrBtn">Find lyrics</button>
     </div>
     <div id="lyricsCard" class="card">
       <div id="lyrics"><div class="placeholder">Lyrics appear here</div></div>
@@ -212,6 +226,15 @@
   </aside>
 </main>
 
+<!-- LYRICS FINDER -->
+<div id="finder" class="hidden">
+  <section id="finderBox" class="card">
+    <h2>Find lyrics <button class="x" id="fClose">Close</button></h2>
+    <form id="fForm"><input id="fQuery" type="search" placeholder="Search your lyrics" autocomplete="off"><button type="submit">Search</button></form>
+    <ul id="fResults"></ul>
+  </section>
+</div>
+
 <!-- DRIVE MODE -->
 <section id="drive" class="hidden">
   <div id="dTop">
@@ -232,7 +255,7 @@
 <script>
 "use strict";
 /* ---------- storage (IndexedDB) ---------- */
-const DB_NAME = "sing-app", DB_VER = 1;
+const DB_NAME = "sing-app", DB_VER = 2;
 let db;
 function openDB() {
   return new Promise((res, rej) => {
@@ -240,6 +263,7 @@ function openDB() {
     r.onupgradeneeded = () => {
       const d = r.result;
       if (!d.objectStoreNames.contains("songs")) d.createObjectStore("songs", { keyPath: "id" });
+      if (!d.objectStoreNames.contains("lyrics")) d.createObjectStore("lyrics", { keyPath: "id" });
       if (!d.objectStoreNames.contains("takes")) {
         const t = d.createObjectStore("takes", { keyPath: "id", autoIncrement: true });
         t.createIndex("songId", "songId");
@@ -262,6 +286,9 @@ function tx(store, mode, fn) {
 const getSong = id => tx("songs", "readonly", s => s.get(id));
 const putSong = song => tx("songs", "readwrite", s => s.put(song));
 const delSong = id => tx("songs", "readwrite", s => s.delete(id));
+const putLyric = l => tx("lyrics", "readwrite", s => s.put(l));
+const getLyric = id => tx("lyrics", "readonly", s => s.get(id));
+const allLyrics = () => tx("lyrics", "readonly", s => s.getAll());
 const putTake = take => tx("takes", "readwrite", s => s.add(take));
 const delTake = id => tx("takes", "readwrite", s => s.delete(id));
 function allSongMeta() {  // names only, without loading audio into memory
@@ -280,14 +307,26 @@ const saveSettings = () => localStorage.setItem("sing-settings", JSON.stringify(
 const $ = id => document.getElementById(id);
 const fmt = t => { t = Math.max(0, t || 0); return Math.floor(t / 60) + ":" + String(Math.floor(t % 60)).padStart(2, "0"); };
 const baseName = n => n.replace(/\.[^.]+$/, "");
-function displayName(id) {
-  // "Artist - Title" -> "Title — Artist" so the list reads by song title
-  const i = id.indexOf(" - ");
-  return i > 0 ? id.slice(i + 3) + " — " + id.slice(0, i) : id;
+function prettyName(id) {
+  // tidy file names for display/sorting: drop track numbers ("05 ", "1-07 ", "17 ")
+  // and stem suffixes like "-other-G major-113bpm-441hz"
+  let n = id;
+  const stem = /-(other|vocals)-[^]*$/i.exec(n);
+  n = n.replace(/-(other|vocals)-[^]*$/i, "");
+  n = n.replace(/_+$/, "");
+  n = n.replace(/^(?:\d-\d{1,2}|0\d|[12]\d|30|\d)(?=[\s._-])[\s._-]+/, "");
+  if (stem && /^-vocals/i.test(stem[0])) n += " (vocals)";
+  return n.trim() || id;
 }
 function splitName(id) {
-  const i = id.indexOf(" - ");
-  return i > 0 ? [id.slice(i + 3), id.slice(0, i)] : [id, ""];
+  const n = prettyName(id);
+  const i = n.indexOf(" - ");
+  return i > 0 ? [n.slice(i + 3), n.slice(0, i)] : [n, ""];
+}
+function displayName(id) {
+  // "Artist - Title" -> "Title — Artist" so the list reads by song title
+  const [t, a] = splitName(id);
+  return a ? t + " — " + a : t;
 }
 function sortKey(id) { return displayName(id).toLowerCase().replace(/^(the|a|an) /, ""); }
 function parseLRC(text) {
@@ -315,7 +354,7 @@ function renderList() {
   $("songCount").textContent = songIds.length ? (q ? `${visibleIds.length} of ${songIds.length}` : songIds.length) : "";
   const ul = $("songList"); ul.innerHTML = "";
   if (!songIds.length) {
-    ul.innerHTML = '<li class="empty">No songs yet.<br><br>Tap <b>Import</b>, open your Karaoke Library ▸ <b>No Vocals</b> folder in Files, tap <b>Select</b> ▸ <b>Select All</b>, then <b>Open</b>.<br><br>Including the .lrc files gives you scrolling lyrics.</li>';
+    ul.innerHTML = '<li class="empty">No songs yet.<br><br>Tap <b>Import</b>, open your Karaoke Library ▸ <b>No Vocals</b> folder in Files, tap <b>Select</b> ▸ <b>Select All</b>, then <b>Open</b>.<br><br>Then import your <b>Lyrics</b> folder the same way. Lyrics are matched to songs automatically.</li>';
     return;
   }
   let letter = "";
@@ -353,15 +392,24 @@ $("fileInput").onchange = async e => {
     await putSong(Object.assign(existing || { id, lrc: "" }, { id, audio: f, type: f.type || "audio/mpeg" }));
     n++;
   }
+  // lyrics files go into the app's lyrics library (.lrc preferred over .txt for the same name)
   let l = 0;
   for (const f of lrcs) {
     const id = baseName(f.name);
-    const s = await getSong(id);
-    if (s) { s.lrc = await f.text(); s.lrcIsPlain = /\.txt$/i.test(f.name); await putSong(s); l++; }
+    const isLrc = /\.lrc$/i.test(f.name);
+    const old = await getLyric(id);
+    if (old && old.lrc && !isLrc) continue;
+    let text = await f.text();
+    if (!isLrc) text = text.replace(/^\(Transcribed automatically[^\n]*\n+/, "");
+    await putLyric({ id, lrc: isLrc ? text : "", plain: isLrc ? (old && old.plain) || "" : text });
+    l++;
   }
+  // attach lyrics to songs that don't have any yet
+  const matched = await autoMatchLyrics();
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
   await refreshLibrary();
-  alert(`Imported ${n} song${n === 1 ? "" : "s"}` + (l ? ` and lyrics for ${l}.` : "."));
+  alert(`Imported ${n} song${n === 1 ? "" : "s"}` + (l ? ` and ${l} lyrics file${l === 1 ? "" : "s"}` : "") +
+        (matched ? `.\nMatched lyrics to ${matched} song${matched === 1 ? "" : "s"}.` : "."));
 };
 
 /* ---------- player ---------- */
@@ -370,6 +418,9 @@ let cur = null;           // current song record
 let lrcLines = [];
 let lyricEls = [];
 let micStream = null, recorder = null, recStart = 0, chunks = [];
+let stopReason = "";
+let micWarm = false, userStop = false, singStartedAt = 0, resumeTries = 0;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 let mode = "idle";        // idle | track | singing | listening
 let listen = null;        // { ctx, nodes, startCtxTime, from }
 const decodedCache = new Map();
@@ -420,7 +471,7 @@ function renderLyrics() {
     box.style.padding = "20px 24px";
     return;
   } else {
-    box.innerHTML = '<div class="placeholder">No lyrics for this song.<br>Import its .lrc file to see them here.</div>';
+    box.innerHTML = '<div class="placeholder"><div>No lyrics for this song yet.<br>Tap <b>Find lyrics</b> above to add them.</div></div>';
     box.style.padding = "0";
     return;
   }
@@ -462,6 +513,11 @@ async function getMic() {
   micStream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
   });
+  micWarm = false;
+  micStream.getAudioTracks().forEach(t => t.onended = () => {
+    if (mode === "singing") endSinging("Microphone disconnected - recording stopped.");
+    micStream = null;
+  });
   return micStream;
 }
 function pickMime() {
@@ -476,35 +532,62 @@ async function sing() {
   stopAll();
   try { await getMic(); }
   catch (err) { status("Microphone not available: " + err.message); return; }
+  if (!micWarm) {            // let iPadOS finish switching the audio route (e.g. Bluetooth headset) first
+    status("Getting the microphone ready…");
+    await sleep(900);
+    micWarm = true;
+  }
   if (track.ended || track.currentTime >= (track.duration || 1) - 0.5) track.currentTime = 0;
   const mime = pickMime();
   recorder = new MediaRecorder(micStream, mime ? { mimeType: mime } : undefined);
   chunks = [];
   recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  recorder.onerror = e => endSinging("Recording error: " + ((e.error && e.error.message) || "unknown"));
   const songId = cur.id;
   recorder.onstop = async () => {
     const blob = new Blob(chunks, { type: recorder.mimeType || mime || "audio/mp4" });
     if (blob.size > 1000) {
       await putTake({ songId, start: recStart, blob, created: Date.now() });
       if (cur && cur.id === songId) await renderTakes();
-      status("Take saved.");
+      if (!stopReason) status("Take saved.");
     }
   };
   recStart = track.currentTime;
-  recorder.start();
+  userStop = false; resumeTries = 0; stopReason = "";
+  recorder.start(1000);      // save data every second so nothing is lost if iPadOS interrupts
   track.volume = Math.min(1, settings.trackVol);
-  await track.play();
   mode = "singing";
+  singStartedAt = performance.now();
   setButtons();
+  try { await track.play(); }
+  catch (err) { endSinging("Couldn't start the track: " + err.message); return; }
   status("Recording…");
+}
+function endSinging(reason) {
+  if (mode !== "singing") return;
+  stopSinging();
+  stopReason = reason;
+  status(reason + " Take saved.");
 }
 function stopSinging() {
   if (mode !== "singing") return;
+  userStop = true;
   track.pause();
   try { recorder && recorder.state !== "inactive" && recorder.stop(); } catch (_) {}
   mode = "idle";
   setButtons();
 }
+track.addEventListener("pause", () => {
+  if (mode !== "singing" || userStop || track.ended) return;
+  // paused by iPadOS (audio route change / interruption), not by you
+  if (resumeTries < 3) {
+    resumeTries++;
+    track.play().then(() => status("Recording… (resumed after an audio interruption)"))
+      .catch(() => endSinging("iPad paused the track (audio interruption)."));
+  } else {
+    endSinging("iPad kept pausing the track (audio interruption).");
+  }
+});
 track.onended = async () => {
   if (mode === "singing") {
     stopSinging();
@@ -607,6 +690,95 @@ $("delSongBtn").onclick = async () => {
   $("lyrics").innerHTML = '<div class="placeholder">Lyrics appear here</div>'; renderTakes();
 };
 
+/* ---------- lyrics finder (searches your own imported lyrics) ---------- */
+function cleanQuery(id) {
+  return id
+    .replace(/-(other|vocals)-.*$/i, "")              // Moises-style stem names
+    .replace(/^\d{1,2}(-\d{1,2})?\s+/, "")            // track numbers like "05 " or "1-07 "
+    .replace(/#\.?\d+$/, "")                           // "#.2"
+    .replace(/\b(karaoke|karaok|karao|karo|kara|isolated vocals?|vocals?|instrumental|no vocals)\b/gi, "")
+    .replace(/\s+cut\s*$/i, "")
+    .replace(/[,\-–—_]+\s*$/, "").replace(/\s+/g, " ").trim();
+}
+const norm = t => t.toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9 ]+/g, " ").replace(/\b(the|a|an)\b/g, " ").replace(/\s+/g, " ").trim();
+function lyricTitle(lid) { const i = lid.indexOf(" - "); return i > 0 ? lid.slice(i + 3) : lid; }
+function matchScore(query, lid) {
+  const q = norm(query), full = norm(lid), title = norm(lyricTitle(lid));
+  if (!q) return 0;
+  if (q === title || q === full) return 1;
+  const qa = q.split(" "), ta = new Set(full.split(" ")), tt = title.split(" ");
+  const hit = qa.filter(w => ta.has(w)).length;
+  if (!hit) return 0;
+  const cover = hit / qa.length;                       // how much of the search is found
+  const titleCover = tt.filter(w => qa.includes(w)).length / tt.length;  // how much of the title is matched
+  return 0.6 * cover + 0.4 * titleCover;
+}
+function lyricText(l) { return l.lrc || l.plain || ""; }
+async function attachLyric(song, l) {
+  song.lrc = lyricText(l); song.lrcIsPlain = !l.lrc;
+  await putSong(song);
+}
+async function autoMatchLyrics() {
+  const lyr = await allLyrics();
+  if (!lyr.length) return 0;
+  let n = 0;
+  for (const id of await allSongMeta()) {
+    const song = await getSong(id);
+    if (song.lrc) continue;
+    const exact = lyr.find(l => l.id === id);
+    let best = exact, bestScore = exact ? 1 : 0;
+    if (!exact) {
+      const q = cleanQuery(id);
+      for (const l of lyr) { const sc = matchScore(q, l.id); if (sc > bestScore) { best = l; bestScore = sc; } }
+    }
+    if (best && bestScore >= 0.9 && lyricText(best)) { await attachLyric(song, best); n++; }
+  }
+  return n;
+}
+function openFinder() {
+  if (!cur) return;
+  $("fQuery").value = cleanQuery(cur.id);
+  $("fResults").innerHTML = "";
+  $("finder").classList.remove("hidden");
+  searchLyrics();
+}
+async function searchLyrics(e) {
+  if (e) e.preventDefault();
+  const q = $("fQuery").value.trim();
+  const ul = $("fResults");
+  const lyr = await allLyrics();
+  if (!lyr.length) {
+    ul.innerHTML = '<li class="msg">No lyrics imported yet. Tap <b>Import</b>, open your Karaoke Library ▸ <b>Lyrics</b> folder, Select All, then Open.</li>';
+    return;
+  }
+  const res = lyr.map(l => ({ l, sc: q ? matchScore(q, l.id) : 0 }))
+    .filter(x => !q || x.sc > 0)
+    .sort((a, b) => b.sc - a.sc || a.l.id.localeCompare(b.l.id))
+    .slice(0, 40);
+  if (!res.length) { ul.innerHTML = '<li class="msg">No match in your lyrics. Try fewer words, or just the title.</li>'; return; }
+  ul.innerHTML = "";
+  for (const { l, sc } of res) {
+    const li = document.createElement("li");
+    if (sc >= 0.9) li.className = "good";
+    const [t, a] = splitName(l.id);
+    const d1 = document.createElement("div"); d1.textContent = a ? `${t} — ${a}` : t;
+    const d2 = document.createElement("div"); d2.className = "m";
+    d2.innerHTML = (sc >= 0.9 ? "<b>best match</b> · " : "") + (l.lrc ? "scrolling" : "plain text");
+    li.append(d1, d2);
+    li.onclick = async () => {
+      await attachLyric(cur, l);
+      renderLyrics(); lastIdx = -1; updateTime(track.currentTime);
+      $("finder").classList.add("hidden");
+      status("Lyrics added to this song.");
+    };
+    ul.appendChild(li);
+  }
+}
+$("lyrBtn").onclick = openFinder;
+$("fClose").onclick = () => $("finder").classList.add("hidden");
+$("fForm").onsubmit = searchLyrics;
+$("finder").onclick = e => { if (e.target.id === "finder") $("finder").classList.add("hidden"); };
+
 /* ---------- song navigation ---------- */
 function neighbor(step) {
   const list = visibleIds.length ? visibleIds : songIds;
@@ -634,7 +806,7 @@ function setButtons() {
   $("dListen").textContent = mode === "listening" ? "STOP" : "LISTEN";
   if ("mediaSession" in navigator) navigator.mediaSession.playbackState = (singing || mode === "track" || mode === "listening") ? "playing" : "paused";
 }
-$("singBtn").onclick = sing;
+$("singBtn").onclick = sing;   // sing() toggles: stops when already singing
 $("playBtn").onclick = playTrack;
 $("listenBtn").onclick = () => mode === "listening" ? stopListening() : listenTake();
 $("nextBtn").onclick = () => { stopAll(); next(); };
@@ -663,7 +835,12 @@ function setMediaSession() {
   try {
     navigator.mediaSession.metadata = new MediaMetadata({ title: displayName(cur.id), artist: "Sing" });
     navigator.mediaSession.setActionHandler("play", () => { mode === "singing" ? null : sing(); });
-    navigator.mediaSession.setActionHandler("pause", () => { if (mode === "singing") stopSinging(); else stopAll(); });
+    navigator.mediaSession.setActionHandler("pause", () => {
+      if (mode === "singing") {
+        if (performance.now() - singStartedAt < 4000) return;   // ignore the pause iPadOS sends when the mic switches on
+        stopSinging(); status("Stopped from headset.");
+      } else stopAll();
+    });
     navigator.mediaSession.setActionHandler("nexttrack", () => { stopAll(); next(); });
     navigator.mediaSession.setActionHandler("previoustrack", () => { stopAll(); prev(); });
   } catch (_) {}
