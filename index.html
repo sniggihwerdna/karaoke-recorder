@@ -68,6 +68,7 @@
   /* transport */
   #transportCard { padding: 14px 18px 12px; }
   #progressRow { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  #progressRow .skip { padding: 6px 10px; font-size: 14px; border-radius: 10px; font-variant-numeric: tabular-nums; }
   #progress { flex: 1; height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; position: relative; cursor: pointer; }
   #progress div { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 5px; }
   #transport { display: flex; justify-content: center; align-items: center; gap: 14px; margin-top: 14px; }
@@ -195,7 +196,11 @@
       <div id="lyrics"><div class="placeholder">Lyrics appear here</div></div>
     </div>
     <div id="transportCard" class="card">
-      <div id="progressRow"><span id="tNow">0:00</span><div id="progress"><div></div></div><span id="tDur">0:00</span></div>
+      <div id="progressRow">
+        <button id="back15" class="skip" aria-label="Back 15 seconds">−15</button>
+        <span id="tNow">0:00</span><div id="progress"><div></div></div><span id="tDur">0:00</span>
+        <button id="fwd15" class="skip" aria-label="Forward 15 seconds">+15</button>
+      </div>
       <div id="transport">
         <button id="prevBtn" class="icon" aria-label="Previous song">⏮</button>
         <button id="restartBtn" class="icon" aria-label="Back to start">↺</button>
@@ -213,13 +218,14 @@
     <section class="card">
       <h2>Mixer</h2>
       <div class="body">
-        <div class="row"><label>Track</label><input id="trackVol" type="range" min="0" max="2" step="0.01"><output id="trackVolOut"></output></div>
+        <div class="row"><label>Track</label><input id="trackVol" type="range" min="0" max="1" step="0.01"><output id="trackVolOut"></output></div>
         <div class="row"><label>Voice</label><input id="voiceVol" type="range" min="0" max="3" step="0.01"><output id="voiceVolOut"></output></div>
         <div class="row"><label>Sync</label><input id="latency" type="range" min="-50" max="300" step="5"><output id="latencyOut"></output></div>
         <div class="hint">Moves your voice earlier on playback. Adjust while a take plays; it's remembered.</div>
         <div class="row"><label>Body</label><input id="warmth" type="range" min="0" max="1" step="0.01"><output id="warmthOut"></output></div>
         <div class="row"><label>Reverb</label><input id="reverb" type="range" min="0" max="1" step="0.01"><output id="reverbOut"></output></div>
         <label class="check"><input id="autoNext" type="checkbox"> Auto-continue to the next song</label>
+        <label class="check" style="margin-top:8px"><input id="shuffle" type="checkbox"> Shuffle (next song is random)</label>
       </div>
     </section>
     <section id="takesCard" class="card">
@@ -332,9 +338,10 @@ function takesFor(songId) {
 }
 
 /* ---------- settings ---------- */
-const settings = Object.assign({ trackVol: 1.0, voiceVol: 1.2, latency: 150, autoNext: false, warmth: 0.6, reverb: 0.25 },
+const settings = Object.assign({ trackVol: 1.0, voiceVol: 1.2, latency: 150, autoNext: false, shuffle: false, warmth: 0.6, reverb: 0.25 },
   JSON.parse(localStorage.getItem("sing-settings") || "{}"));
 if (settings.latency > 300) settings.latency = 300;
+if (settings.trackVol > 1) settings.trackVol = 1;
 const saveSettings = () => localStorage.setItem("sing-settings", JSON.stringify(settings));
 
 /* ---------- helpers ---------- */
@@ -548,12 +555,10 @@ function tick() {
 requestAnimationFrame(tick);
 
 $("progress").onclick = e => {
-  if (mode === "singing" || mode === "listening") return;
   const r = e.currentTarget.getBoundingClientRect();
-  const t = (e.clientX - r.left) / r.width * (track.duration || 0);
-  track.currentTime = t; updateTime(t);
+  seekTo((e.clientX - r.left) / r.width * (track.duration || 0));
 };
-$("restartBtn").onclick = () => { if (mode === "singing") return; stopAll(); track.currentTime = 0; updateTime(0); lastIdx = -1; };
+$("restartBtn").onclick = () => seekTo(0);
 
 /* ---------- singing (record voice only; track plays in headphones) ---------- */
 async function getMic() {
@@ -591,27 +596,8 @@ async function sing() {
   }
   if (!cur || !cur.audio) { status("This song's audio is missing - re-import it."); return; }
   if (track.ended || track.currentTime >= (track.duration || 1) - 0.5) track.currentTime = 0;
-  const mime = pickMime();
-  const opts = { audioBitsPerSecond: 256000 };
-  if (mime) opts.mimeType = mime;
-  try { recorder = new MediaRecorder(micStream, opts); }
-  catch (_) { recorder = new MediaRecorder(micStream, mime ? { mimeType: mime } : undefined); }
-  chunks = [];
-  recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
-  recorder.onerror = e => endSinging("Recording error: " + ((e.error && e.error.message) || "unknown"));
-  const songId = cur.id;
-  recorder.onstop = async () => {
-    const blob = new Blob(chunks, { type: recorder.mimeType || mime || "audio/mp4" });
-    const dur = (performance.now() - singStartedAt) / 1000;
-    if (blob.size > 1000) {
-      await putTake({ songId, start: recStart, blob, created: Date.now() });
-      if (cur && cur.id === songId) await renderTakes();
-      status((stopReason ? stopReason + " " : "") + `Take saved (${fmt(dur)} long).`);
-    }
-  };
-  recStart = track.currentTime;
   userStop = false; resumeTries = 0; stopReason = "";
-  recorder.start(1000);      // save data every second so nothing is lost if iPadOS interrupts
+  startSegment(track.currentTime);
   trackOut();
   mode = "singing";
   singStartedAt = performance.now();
@@ -619,6 +605,39 @@ async function sing() {
   try { await track.play(); }
   catch (err) { endSinging("Couldn't start the track: " + err.message); return; }
   status("Recording…");
+}
+/* One recording segment = one take, aligned to where it started in the song.
+   Jumping around while singing ends the current segment and starts a new one. */
+function startSegment(startPos) {
+  const mime = pickMime();
+  const opts = { audioBitsPerSecond: 256000 };
+  if (mime) opts.mimeType = mime;
+  let rec;
+  try { rec = new MediaRecorder(micStream, opts); }
+  catch (_) { rec = new MediaRecorder(micStream, mime ? { mimeType: mime } : undefined); }
+  const parts = [];
+  const songId = cur.id;
+  const began = performance.now();
+  rec.ondataavailable = e => { if (e.data && e.data.size) parts.push(e.data); };
+  rec.onerror = e => endSinging("Recording error: " + ((e.error && e.error.message) || "unknown"));
+  rec.onstop = async () => {
+    const blob = new Blob(parts, { type: rec.mimeType || mime || "audio/mp4" });
+    const dur = (performance.now() - began) / 1000;
+    if (blob.size > 1000 && dur > 1) {
+      await putTake({ songId, start: startPos, blob, created: Date.now() });
+      if (cur && cur.id === songId) await renderTakes();
+      if (mode !== "singing") status((stopReason ? stopReason + " " : "") + `Take saved (${fmt(dur)} long).`);
+    }
+  };
+  rec.start(1000);           // save data every second so nothing is lost if iPadOS interrupts
+  recorder = rec;
+  recStart = startPos;
+}
+function splitSegment(newPos) {     // keep singing, but start a new take at the new position
+  try { recorder && recorder.state !== "inactive" && recorder.stop(); } catch (_) {}
+  track.currentTime = newPos;
+  startSegment(newPos);
+  updateTime(newPos); lastIdx = -1;
 }
 function endSinging(reason) {
   if (mode !== "singing") return;
@@ -648,30 +667,32 @@ track.addEventListener("pause", () => {
 track.onended = async () => {
   if (mode === "singing") {
     endSinging("Song ended.");
-    if (settings.autoNext) { status("Next song in 3 seconds…"); setTimeout(async () => { await next(); sing(); }, 3000); }
+    if (settings.autoNext) {
+      status(settings.shuffle ? "Random next song in 3 seconds…" : "Next song in 3 seconds…");
+      setTimeout(async () => { const id = neighbor(1); if (!id) return; if (cur) history.push(cur.id); await openSong(id, { keepView: true }); sing(); }, 3000);
+    }
   } else if (mode === "track") { mode = "idle"; setButtons(); }
 };
 
-/* track output: through Web Audio so volume can go above 100% (with a limiter to prevent distortion) */
-let liveCtx = null, liveGain = null;
-function trackOut() {
-  if (liveCtx) { if (liveCtx.state !== "running") liveCtx.resume(); return; }
-  try {
-    liveCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const src = liveCtx.createMediaElementSource(track);
-    liveGain = liveCtx.createGain();
-    const lim = liveCtx.createDynamicsCompressor();
-    lim.threshold.value = -2; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.002; lim.release.value = 0.1;
-    src.connect(liveGain); liveGain.connect(lim); lim.connect(liveCtx.destination);
-    liveCtx.onstatechange = () => { if (liveCtx.state !== "running" && (mode === "singing" || mode === "track")) liveCtx.resume(); };
-    track.volume = 1;
-  } catch (_) { liveCtx = null; liveGain = null; }
-  setTrackLevel();
+/* ---------- jumping around: ±15 s, rewind (recording keeps going as new takes) ---------- */
+function seekTo(t) {
+  const dur = track.duration || 0;
+  t = Math.max(0, Math.min(dur ? dur - 0.5 : t, t));
+  if (mode === "singing") { splitSegment(t); status("Recording… (new take from " + fmt(t) + ")"); }
+  else if (mode === "listening" && listen) {
+    const take = listen.take;
+    listenTake(take, Math.max(take.start, t));
+  } else { track.currentTime = t; updateTime(t); lastIdx = -1; }
 }
-function setTrackLevel() {
-  if (liveGain) { track.volume = 1; liveGain.gain.value = settings.trackVol; }
-  else track.volume = Math.min(1, settings.trackVol);
+function curPos() {
+  if (mode === "listening" && listen) return listen.from + (listen.ctx.currentTime - listen.startCtxTime);
+  return track.currentTime;
 }
+const seekBy = d => seekTo(curPos() + d);
+
+/* track output: played straight from the file, no processing */
+function trackOut() { setTrackLevel(); }
+function setTrackLevel() { track.volume = Math.max(0, Math.min(1, settings.trackVol)); }
 
 /* plain track playback (no recording) */
 async function playTrack() {
@@ -745,12 +766,9 @@ async function listenTake(take, startAt) {
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
   await ctx.resume();
   const [trk, voc] = await Promise.all([decode(ctx, cur.audio, cur.id), decode(ctx, take.blob, "take:" + take.id)]);
-  const master = ctx.createDynamicsCompressor();
-  master.threshold.value = -2; master.knee.value = 0; master.ratio.value = 20; master.attack.value = 0.002; master.release.value = 0.1;
-  master.connect(ctx.destination);
-  const gT = ctx.createGain();
-  gT.gain.value = settings.trackVol; gT.connect(master);
-  const chain = buildVoiceChain(ctx, master);
+  const gT = ctx.createGain();                       // track: volume only, no processing
+  gT.gain.value = settings.trackVol; gT.connect(ctx.destination);
+  const chain = buildVoiceChain(ctx, ctx.destination);
   const sT = ctx.createBufferSource(), sV = ctx.createBufferSource();
   sT.buffer = trk; sV.buffer = voc; sT.connect(gT); sV.connect(chain.input);
   const when = ctx.currentTime + 0.12;
@@ -906,16 +924,34 @@ $("fForm").onsubmit = searchLyrics;
 $("finder").onclick = e => { if (e.target.id === "finder") $("finder").classList.add("hidden"); };
 
 /* ---------- song navigation ---------- */
+const history = [];          // songs played, so "previous" works in shuffle too
 function neighbor(step) {
   const list = visibleIds.length ? visibleIds : songIds;
   if (!list.length) return null;
   const i = cur ? list.indexOf(cur.id) : -1;
+  if (settings.shuffle && step > 0 && list.length > 1) {
+    const recent = new Set(history.slice(-Math.min(history.length, Math.floor(list.length / 2))));
+    const pool = list.filter(id => id !== (cur && cur.id) && !recent.has(id));
+    const from = pool.length ? pool : list.filter(id => id !== (cur && cur.id));
+    return from[Math.floor(Math.random() * from.length)];
+  }
   return list[(i + step + list.length) % list.length];
 }
-async function next() { const id = neighbor(1); if (id) await openSong(id, { keepView: true }); }
+// changing song while singing keeps singing: the take is saved and recording continues on the new song
+async function changeSong(id) {
+  const wasSinging = mode === "singing";
+  if (wasSinging) { stopSinging(); }
+  stopAll();
+  if (cur) history.push(cur.id);
+  await openSong(id, { keepView: true });
+  if (wasSinging) await sing();
+}
+async function next() { const id = neighbor(1); if (id) await changeSong(id); }
 async function prev() {
-  if (mode !== "singing" && track.currentTime > 5) { track.currentTime = 0; updateTime(0); return; }
-  const id = neighbor(-1); if (id) await openSong(id, { keepView: true });
+  if (curPos() > 5) { seekTo(0); return; }                  // first press: back to the start
+  let id = null;
+  if (settings.shuffle && history.length) { id = history.pop(); if (id) { const w = mode === "singing"; if (w) stopSinging(); stopAll(); await openSong(id, { keepView: true }); if (w) await sing(); return; } }
+  id = neighbor(-1); if (id) await changeSong(id);
 }
 
 /* ---------- buttons ---------- */
@@ -932,11 +968,13 @@ function setButtons() {
   $("dListen").textContent = mode === "listening" ? "STOP" : "LISTEN";
   if ("mediaSession" in navigator) navigator.mediaSession.playbackState = (singing || mode === "track" || mode === "listening") ? "playing" : "paused";
 }
+$("back15").onclick = () => seekBy(-15);
+$("fwd15").onclick = () => seekBy(15);
 $("singBtn").onclick = sing;   // sing() toggles: stops when already singing
 $("playBtn").onclick = playTrack;
 $("listenBtn").onclick = () => mode === "listening" ? stopListening() : listenTake();
-$("nextBtn").onclick = () => { stopAll(); next(); };
-$("prevBtn").onclick = () => { stopAll(); prev(); };
+$("nextBtn").onclick = () => next();
+$("prevBtn").onclick = () => prev();
 
 /* ---------- mixer / settings ---------- */
 let syncTimer = null;
@@ -964,6 +1002,8 @@ bindRange("warmth", "warmth", v => Math.round(v * 100) + "%");
 bindRange("reverb", "reverb", v => Math.round(v * 100) + "%");
 $("autoNext").checked = settings.autoNext;
 $("autoNext").onchange = e => { settings.autoNext = e.target.checked; saveSettings(); };
+$("shuffle").checked = settings.shuffle;
+$("shuffle").onchange = e => { settings.shuffle = e.target.checked; saveSettings(); };
 
 /* ---------- headset / steering-wheel buttons ---------- */
 function setMediaSession() {
@@ -982,8 +1022,10 @@ function setMediaSession() {
         status("Recording… (headset pause ignored - press twice to stop)");
       } else stopAll();
     });
-    navigator.mediaSession.setActionHandler("nexttrack", () => { if (mode === "singing") endSinging("Headset/iPad sent 'next track'."); stopAll(); next(); });
-    navigator.mediaSession.setActionHandler("previoustrack", () => { if (mode === "singing") endSinging("Headset/iPad sent 'previous track'."); stopAll(); prev(); });
+    navigator.mediaSession.setActionHandler("nexttrack", () => next());
+    navigator.mediaSession.setActionHandler("previoustrack", () => prev());
+    navigator.mediaSession.setActionHandler("seekbackward", () => seekBy(-15));
+    navigator.mediaSession.setActionHandler("seekforward", () => seekBy(15));
   } catch (_) {}
 }
 
@@ -1014,8 +1056,8 @@ $("driveBtn").onclick = enterDrive;
 $("dExit").onclick = exitDrive;
 $("dSing").onclick = sing;
 $("dListen").onclick = () => mode === "listening" ? stopListening() : listenTake();
-$("dNext").onclick = () => { stopAll(); next(); };
-$("dPrev").onclick = () => { stopAll(); prev(); };
+$("dNext").onclick = () => next();
+$("dPrev").onclick = () => prev();
 
 /* ---------- start ---------- */
 openDB().then(d => { db = d; refreshLibrary(); }).catch(err => {
