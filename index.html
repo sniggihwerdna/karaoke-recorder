@@ -418,7 +418,7 @@ let cur = null;           // current song record
 let lrcLines = [];
 let lyricEls = [];
 let micStream = null, recorder = null, recStart = 0, chunks = [];
-let stopReason = "";
+let stopReason = "", lastPauseCmd = 0;
 let micWarm = false, userStop = false, singStartedAt = 0, resumeTries = 0;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let mode = "idle";        // idle | track | singing | listening
@@ -528,7 +528,7 @@ function pickMime() {
 }
 async function sing() {
   if (!cur) return;
-  if (mode === "singing") return stopSinging();
+  if (mode === "singing") return endSinging("Stopped.");
   stopAll();
   try { await getMic(); }
   catch (err) { status("Microphone not available: " + err.message); return; }
@@ -546,10 +546,11 @@ async function sing() {
   const songId = cur.id;
   recorder.onstop = async () => {
     const blob = new Blob(chunks, { type: recorder.mimeType || mime || "audio/mp4" });
+    const dur = (performance.now() - singStartedAt) / 1000;
     if (blob.size > 1000) {
       await putTake({ songId, start: recStart, blob, created: Date.now() });
       if (cur && cur.id === songId) await renderTakes();
-      if (!stopReason) status("Take saved.");
+      status((stopReason ? stopReason + " " : "") + `Take saved (${fmt(dur)} long).`);
     }
   };
   recStart = track.currentTime;
@@ -567,7 +568,7 @@ function endSinging(reason) {
   if (mode !== "singing") return;
   stopSinging();
   stopReason = reason;
-  status(reason + " Take saved.");
+  status(reason);
 }
 function stopSinging() {
   if (mode !== "singing") return;
@@ -590,7 +591,7 @@ track.addEventListener("pause", () => {
 });
 track.onended = async () => {
   if (mode === "singing") {
-    stopSinging();
+    endSinging("Song ended.");
     if (settings.autoNext) { status("Next song in 3 seconds…"); setTimeout(async () => { await next(); sing(); }, 3000); }
   } else if (mode === "track") { mode = "idle"; setButtons(); }
 };
@@ -644,7 +645,7 @@ function stopListening() {
   if (mode === "listening") { mode = "idle"; setButtons(); status(""); }
 }
 function stopAll() {
-  if (mode === "singing") stopSinging();
+  if (mode === "singing") endSinging("Stopped (another button was pressed).");
   if (mode === "listening") stopListening();
   if (mode === "track") { track.pause(); mode = "idle"; }
   setButtons();
@@ -837,12 +838,17 @@ function setMediaSession() {
     navigator.mediaSession.setActionHandler("play", () => { mode === "singing" ? null : sing(); });
     navigator.mediaSession.setActionHandler("pause", () => {
       if (mode === "singing") {
-        if (performance.now() - singStartedAt < 4000) return;   // ignore the pause iPadOS sends when the mic switches on
-        stopSinging(); status("Stopped from headset.");
+        // Bluetooth headsets / iPadOS sometimes send a stray "pause" while recording.
+        // A single pause is ignored; press the headset button twice within 3 seconds to stop.
+        const now = performance.now();
+        if (now - lastPauseCmd < 3000) { endSinging("Stopped from headset (double press)."); lastPauseCmd = 0; return; }
+        lastPauseCmd = now;
+        if (track.paused) track.play().catch(() => {});
+        status("Recording… (headset pause ignored - press twice to stop)");
       } else stopAll();
     });
-    navigator.mediaSession.setActionHandler("nexttrack", () => { stopAll(); next(); });
-    navigator.mediaSession.setActionHandler("previoustrack", () => { stopAll(); prev(); });
+    navigator.mediaSession.setActionHandler("nexttrack", () => { if (mode === "singing") endSinging("Headset/iPad sent 'next track'."); stopAll(); next(); });
+    navigator.mediaSession.setActionHandler("previoustrack", () => { if (mode === "singing") endSinging("Headset/iPad sent 'previous track'."); stopAll(); prev(); });
   } catch (_) {}
 }
 
