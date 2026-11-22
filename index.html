@@ -311,8 +311,9 @@ function tx(store, mode, fn) {
     let out; const r = fn(s);
     if (r) r.onsuccess = () => { out = r.result; };
     t.oncomplete = () => res(out);
-    t.onerror = () => rej(t.error);
-    t.onabort = () => rej(t.error);
+    const fail = () => rej(t.error || new Error("iPad storage refused to save (" + store + "). It may be full."));
+    t.onerror = fail;
+    t.onabort = fail;
   });
 }
 const getSong = id => tx("songs", "readonly", s => s.get(id));
@@ -404,7 +405,7 @@ function renderList() {
     if (a) { const s = document.createElement("span"); s.className = "artist"; s.textContent = a; li.appendChild(s); }
     li.dataset.id = id;
     if (cur && cur.id === id) li.classList.add("sel");
-    li.onclick = () => openSong(id).catch(err => showError("Couldn't open song: " + (err.message || err.name || err)));
+    li.onclick = () => openSong(id).catch(err => showError("Couldn't open song: " + errText(err)));
     ul.appendChild(li);
   }
 }
@@ -412,7 +413,8 @@ $("search").oninput = renderList;
 
 /* ---------- import ---------- */
 $("importBtn").onclick = () => $("fileInput").click();
-$("fileInput").onchange = e => importFiles(e).catch(err => showError("Import failed: " + (err.message || err.name || err)));
+const errText = err => (err && (err.message || err.name)) || String(err);
+$("fileInput").onchange = e => importFiles(e).catch(err => showError("Import failed: " + errText(err)));
 async function importFiles(e) {
   const files = [...e.target.files];
   e.target.value = "";
@@ -420,12 +422,21 @@ async function importFiles(e) {
   const audio = files.filter(f => /\.(mp3|m4a|wav|aac|aif|aiff|ogg)$/i.test(f.name) || f.type.startsWith("audio/"));
   const lrcs = files.filter(f => /\.(lrc|txt)$/i.test(f.name));
   let n = 0;
-  for (const f of audio) {
+  const failed = [];
+  for (const [i, f] of audio.entries()) {
     const id = baseName(f.name);
-    const existing = await getSong(id);
-    await putSong(Object.assign(existing || { id, lrc: "" }, { id, audio: f, type: f.type || "audio/mpeg" }));
-    n++;
+    status(`Importing ${i + 1} of ${audio.length}: ${prettyName(id)}`);
+    try {
+      // store a real copy of the audio (not a link to the iCloud file)
+      const data = new Blob([await f.arrayBuffer()], { type: f.type || "audio/mpeg" });
+      const existing = await getSong(id);
+      await putSong(Object.assign(existing || { id, lrc: "" }, { id, audio: data, type: data.type }));
+      n++;
+    } catch (err) {
+      failed.push(`${prettyName(id)} (${errText(err)})`);
+    }
   }
+  status("");
   // lyrics files go into the app's lyrics library (.lrc preferred over .txt for the same name)
   let l = 0;
   for (const f of lrcs) {
@@ -433,7 +444,8 @@ async function importFiles(e) {
     const isLrc = /\.lrc$/i.test(f.name);
     const old = await getLyric(id);
     if (old && old.lrc && !isLrc) continue;
-    let text = await f.text();
+    let text;
+    try { text = await f.text(); } catch (err) { failed.push(`${f.name} (${errText(err)})`); continue; }
     if (!isLrc) text = text.replace(/^\(Transcribed automatically[^\n]*\n+/, "");
     await putLyric({ id, lrc: isLrc ? text : "", plain: isLrc ? (old && old.plain) || "" : text });
     l++;
@@ -443,7 +455,8 @@ async function importFiles(e) {
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
   await refreshLibrary();
   alert(`Imported ${n} song${n === 1 ? "" : "s"}` + (l ? ` and ${l} lyrics file${l === 1 ? "" : "s"}` : "") +
-        (matched ? `.\nMatched lyrics to ${matched} song${matched === 1 ? "" : "s"}.` : "."));
+        (matched ? `.\nMatched lyrics to ${matched} song${matched === 1 ? "" : "s"}.` : ".") +
+        (failed.length ? `\n\nCouldn't import ${failed.length}:\n` + failed.slice(0, 8).join("\n") + (failed.length > 8 ? "\n…" : "") : ""));
 }
 
 /* ---------- player ---------- */
