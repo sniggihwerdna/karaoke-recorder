@@ -172,7 +172,7 @@
 
 <header>
   <h1>Sing<span>.</span></h1>
-  <button id="importBtn">＋ Import</button>
+  <button id="importBtn">＋ Import / Sync</button>
   <button id="driveBtn">Drive mode</button>
   <input id="fileInput" type="file" multiple accept="audio/*,.mp3,.m4a,.wav,.aac,.lrc,.txt" class="hidden">
 </header>
@@ -395,7 +395,7 @@ function renderList() {
   $("songCount").textContent = songIds.length ? (q ? `${visibleIds.length} of ${songIds.length}` : songIds.length) : "";
   const ul = $("songList"); ul.innerHTML = "";
   if (!songIds.length) {
-    ul.innerHTML = '<li class="empty">No songs yet.<br><br>Tap <b>Import</b>, open your Karaoke Library ▸ <b>No Vocals</b> folder in Files, tap <b>Select</b> ▸ <b>Select All</b>, then <b>Open</b>.<br><br>Then import your <b>Lyrics</b> folder the same way. Lyrics are matched to songs automatically.</li>';
+    ul.innerHTML = '<li class="empty">No songs yet.<br><br>Tap <b>Import</b>, open your Karaoke Library ▸ <b>No Vocals</b> folder in Files, tap <b>Select</b> ▸ <b>Select All</b>, then <b>Open</b>.<br><br>Then import your <b>Lyrics</b> folder the same way. Lyrics are matched to songs automatically.<br><br>Later, do the same again any time: only new or changed files are added.</li>';
     return;
   }
   let letter = "";
@@ -428,15 +428,17 @@ async function importFiles(e) {
   if (!files.length) return;
   const audio = files.filter(f => /\.(mp3|m4a|wav|aac|aif|aiff|ogg)$/i.test(f.name) || f.type.startsWith("audio/"));
   const lrcs = files.filter(f => /\.(lrc|txt)$/i.test(f.name));
-  let n = 0;
+  let n = 0, same = 0;
   const failed = [];
   for (const [i, f] of audio.entries()) {
     const id = baseName(f.name);
-    status(`Importing ${i + 1} of ${audio.length}: ${prettyName(id)}`);
+    status(`Checking ${i + 1} of ${audio.length}: ${prettyName(id)}`);
     try {
+      const existing = await getSong(id);
+      if (existing && existing.audio && existing.audio.size === f.size) { same++; continue; }   // already have it
+      status(`Importing ${i + 1} of ${audio.length}: ${prettyName(id)}`);
       // store a real copy of the audio (not a link to the iCloud file)
       const data = new Blob([await f.arrayBuffer()], { type: f.type || "audio/mpeg" });
-      const existing = await getSong(id);
       await putSong(Object.assign(existing || { id, lrc: "" }, { id, audio: data, type: data.type }));
       n++;
     } catch (err) {
@@ -445,24 +447,30 @@ async function importFiles(e) {
   }
   status("");
   // lyrics files go into the app's lyrics library (.lrc preferred over .txt for the same name)
-  let l = 0;
+  let l = 0, lsame = 0;
   for (const f of lrcs) {
     const id = baseName(f.name);
     const isLrc = /\.lrc$/i.test(f.name);
     const old = await getLyric(id);
-    if (old && old.lrc && !isLrc) continue;
+    if (old && old.lrc && !isLrc) { lsame++; continue; }
+    if (old && (isLrc ? old.lrcSize : old.txtSize) === f.size) { lsame++; continue; }   // unchanged
     let text;
     try { text = await f.text(); } catch (err) { failed.push(`${f.name} (${errText(err)})`); continue; }
     if (!isLrc) text = text.replace(/^\(Transcribed automatically[^\n]*\n+/, "");
-    await putLyric({ id, lrc: isLrc ? text : "", plain: isLrc ? (old && old.plain) || "" : text });
+    await putLyric(Object.assign({}, old || {}, isLrc
+      ? { id, lrc: text, lrcSize: f.size }
+      : { id, lrc: "", plain: text, txtSize: f.size }));
     l++;
   }
   // attach lyrics to songs that don't have any yet
   const matched = await autoMatchLyrics();
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
   await refreshLibrary();
-  alert(`Imported ${n} song${n === 1 ? "" : "s"}` + (l ? ` and ${l} lyrics file${l === 1 ? "" : "s"}` : "") +
-        (matched ? `.\nMatched lyrics to ${matched} song${matched === 1 ? "" : "s"}.` : ".") +
+  const parts = [];
+  if (audio.length) parts.push(`${n} new song${n === 1 ? "" : "s"}` + (same ? ` (${same} already in Sing)` : ""));
+  if (lrcs.length) parts.push(`${l} new lyrics file${l === 1 ? "" : "s"}` + (lsame ? ` (${lsame} already in Sing)` : ""));
+  alert("Imported " + (parts.join(", ") || "nothing new") + "." +
+        (matched ? `\nMatched lyrics to ${matched} song${matched === 1 ? "" : "s"}.` : "") +
         (failed.length ? `\n\nCouldn't import ${failed.length}:\n` + failed.slice(0, 8).join("\n") + (failed.length > 8 ? "\n…" : "") : ""));
 }
 
@@ -573,6 +581,17 @@ async function getMic() {
   });
   return micStream;
 }
+/* Release the mic whenever we're not recording: while the mic is open, iPadOS keeps
+   Bluetooth headsets in low-quality "call" mode for everything you hear. */
+let micReleaseTimer = null;
+function releaseMic(delay = 0) {
+  clearTimeout(micReleaseTimer);
+  micReleaseTimer = setTimeout(() => {
+    if (mode === "singing" || !micStream) return;
+    micStream.getTracks().forEach(t => { t.onended = null; t.stop(); });
+    micStream = null; micWarm = false;
+  }, delay);
+}
 function pickMime() {
   for (const m of ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"]) {
     if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m;
@@ -583,6 +602,7 @@ async function sing() {
   if (!cur) return;
   if (mode === "singing") return endSinging("Stopped.");
   stopAll();
+  clearTimeout(micReleaseTimer);
   try { await getMic(); }
   catch (err) { status("Microphone not available: " + err.message); return; }
   if (!micWarm) {            // let iPadOS finish switching the audio route (e.g. Bluetooth headset) first
@@ -648,6 +668,7 @@ function endSinging(reason) {
 function stopSinging() {
   if (mode !== "singing") return;
   userStop = true;
+  releaseMic(4000);
   track.pause();
   try { recorder && recorder.state !== "inactive" && recorder.stop(); } catch (_) {}
   mode = "idle";
@@ -669,6 +690,7 @@ track.onended = async () => {
     endSinging("Song ended.");
     if (settings.autoNext) {
       status(settings.shuffle ? "Random next song in 3 seconds…" : "Next song in 3 seconds…");
+      clearTimeout(micReleaseTimer); micReleaseTimer = setTimeout(() => {}, 0);   // keep the mic open for the next song
       setTimeout(async () => { const id = neighbor(1); if (!id) return; if (cur) history.push(cur.id); await openSong(id, { keepView: true }); sing(); }, 3000);
     }
   } else if (mode === "track") { mode = "idle"; setButtons(); }
@@ -697,6 +719,7 @@ function setTrackLevel() { track.volume = Math.max(0, Math.min(1, settings.track
 /* plain track playback (no recording) */
 async function playTrack() {
   if (!cur) return;
+  if (micStream) { releaseMic(0); await sleep(300); }
   if (mode === "track") { track.pause(); mode = "idle"; setButtons(); return; }
   stopAll();
   trackOut();
@@ -760,6 +783,7 @@ async function listenTake(take, startAt) {
     if (!take) { status("No takes yet for this song - tap Sing first."); return; }
   }
   if (startAt == null) startAt = take.start;
+  releaseMic(0); await sleep(micStream ? 300 : 0);   // full-quality audio for playback
   if (!take.blob || !cur.audio) { status("This take's audio is missing."); return; }
   stopAll();
   status("Loading take…");
