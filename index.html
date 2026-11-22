@@ -266,8 +266,21 @@ function showError(msg) {
   el.classList.remove("hidden");
   el.onclick = () => el.classList.add("hidden");
 }
-window.addEventListener("error", e => showError("Error: " + (e.message || e.error) + (e.lineno ? " (line " + e.lineno + ")" : "")));
-window.addEventListener("unhandledrejection", e => showError("Error: " + ((e.reason && (e.reason.message || e.reason.name)) || e.reason)));
+let lastAction = "starting up";
+document.addEventListener("click", e => {
+  const b = e.target.closest("button, li");
+  if (b) lastAction = "tapping " + (b.id || b.textContent.trim().slice(0, 30));
+}, true);
+function where(err) {
+  const st = (err && err.stack || "").split("\n").find(l => /index\.html|\d+:\d+/.test(l)) || "";
+  const m = st.match(/(\w+)?@?.*?:(\d+):(\d+)/);
+  return m ? ` [${m[1] || "?"} line ${m[2]}]` : "";
+}
+window.addEventListener("error", e => showError(`${e.message || e.error}${e.lineno ? " [line " + e.lineno + "]" : where(e.error)} while ${lastAction}`));
+window.addEventListener("unhandledrejection", e => {
+  const r = e.reason;
+  showError(`${(r && (r.message || r.name)) || r}${where(r)} while ${lastAction}`);
+});
 /* ---------- storage (IndexedDB) ---------- */
 const DB_NAME = "sing-app", DB_VER = 2;
 let db;
@@ -460,6 +473,7 @@ async function openSong(id, { keepView = false } = {}) {
   stopAll();
   const s = await getSong(id);
   if (!s) return;
+  if (!s.audio) { showError(`"${displayName(id)}" has no audio stored - import its MP3 again.`); return; }
   cur = s;
   if (track.src) URL.revokeObjectURL(track.src);
   track.src = URL.createObjectURL(s.audio);
@@ -535,9 +549,9 @@ async function getMic() {
     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
   });
   micWarm = false;
-  micStream.getAudioTracks().forEach(t => t.onended = () => {
-    if (mode === "singing") endSinging("Microphone disconnected - recording stopped.");
-    micStream = null;
+  const stream = micStream;
+  stream.getAudioTracks().forEach(t => t.onended = () => {
+    if (mode === "singing" && micStream === stream) endSinging("Microphone disconnected - recording stopped.");
   });
   return micStream;
 }
@@ -558,6 +572,11 @@ async function sing() {
     await sleep(900);
     micWarm = true;
   }
+  if (!micStream || !micStream.active) {      // the route switch can drop the mic; get it again
+    try { micStream = null; await getMic(); micWarm = true; }
+    catch (err) { status("Microphone not available: " + err.message); return; }
+  }
+  if (!cur || !cur.audio) { status("This song's audio is missing - re-import it."); return; }
   if (track.ended || track.currentTime >= (track.duration || 1) - 0.5) track.currentTime = 0;
   const mime = pickMime();
   const opts = { audioBitsPerSecond: 256000 };
@@ -707,6 +726,7 @@ async function listenTake(take, startAt) {
     if (!take) { status("No takes yet for this song - tap Sing first."); return; }
   }
   if (startAt == null) startAt = take.start;
+  if (!take.blob || !cur.audio) { status("This take's audio is missing."); return; }
   stopAll();
   status("Loading take…");
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
