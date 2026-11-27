@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interval Harmony Trainer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#16130f; --panel:#201c17; --panel2:#2a251e; --line:#3a332a;
+    --ink:#f2ebe0; --mute:#a99d8b; --accent:#e8a64a; --accent2:#7fc4b8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,sans-serif}
+  body{min-height:100vh;display:flex;justify-content:center;padding:24px 16px 40px}
+  .wrap{width:100%;max-width:860px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+  h1{font-family:Fraunces,Georgia,serif;font-weight:700;font-size:30px;margin:0;letter-spacing:-.01em}
+  h1 span{color:var(--accent)}
+  .sub{color:var(--mute);font-size:14px}
+
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px;margin-bottom:16px}
+  .now{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px;text-align:center}
+  .noteBox{font-family:Fraunces,Georgia,serif;font-size:64px;line-height:1;font-weight:500;min-height:70px;transition:color .15s, transform .15s}
+  .noteBox.lit{transform:scale(1.04)}
+  #baseNote.lit{color:var(--accent)}
+  #ivNote.lit{color:var(--accent2)}
+  .noteCap{font-size:12px;color:var(--mute);text-transform:uppercase;letter-spacing:.12em;margin-top:6px}
+  .ivLabel{font-weight:600;font-size:18px;min-width:120px}
+  .ivLabel small{display:block;font-weight:400;font-size:12px;color:var(--mute);margin-top:4px;min-height:15px}
+
+  .kb{position:relative;height:96px;margin-top:22px;user-select:none}
+  .wk{position:absolute;top:0;bottom:0;background:#efe7da;border:1px solid #7b6f5f;border-radius:0 0 5px 5px}
+  .bk{position:absolute;top:0;height:60%;background:#1c1914;border:1px solid #000;border-radius:0 0 4px 4px;z-index:2}
+  .wk.inScale::after,.bk.inScale::after{content:"";position:absolute;left:50%;bottom:8px;width:6px;height:6px;margin-left:-3px;border-radius:50%;background:#b59c78}
+  .bk.inScale::after{background:#6e6150;bottom:6px}
+  .wk.base{background:var(--accent)} .bk.base{background:#c9822a}
+  .wk.iv{background:var(--accent2)} .bk.iv{background:#4f9a8e}
+  .wk.off{background:#8f877b}
+  .bk.off{background:#100e0b}
+
+  .row{display:flex;gap:12px;align-items:center;justify-content:center;margin-top:20px;flex-wrap:wrap}
+  button.play{background:var(--accent);color:#1b140a;border:0;border-radius:999px;font:600 16px Inter,sans-serif;padding:12px 34px;cursor:pointer}
+  button.play.on{background:var(--panel2);color:var(--ink);border:1px solid var(--line)}
+  .hint{color:var(--mute);font-size:12px}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:680px){.grid{grid-template-columns:1fr}.noteBox{font-size:46px;min-height:52px}.ivLabel{min-width:90px;font-size:16px}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px 18px}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--mute);margin:0 0 12px;font-weight:600}
+  .val{float:right;color:var(--ink);font-weight:600;letter-spacing:0;text-transform:none;font-size:14px}
+  label.f{display:block;font-size:13px;color:var(--mute);margin:10px 0 6px}
+  select{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:9px 10px;font:500 14px Inter,sans-serif}
+  .selRow{display:grid;grid-template-columns:90px 1fr;gap:10px}
+
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:28px;background:transparent;margin:0}
+  input[type=range]::-webkit-slider-runnable-track{height:6px;background:var(--panel2);border-radius:3px}
+  input[type=range]::-moz-range-track{height:6px;background:var(--panel2);border-radius:3px}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-7px;border:2px solid #1b140a;cursor:pointer}
+  input[type=range]::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:var(--accent);border:2px solid #1b140a;cursor:pointer}
+  #ivSlider::-webkit-slider-thumb{background:var(--accent2)}
+  #ivSlider::-moz-range-thumb{background:var(--accent2)}
+
+  .dual{position:relative;height:28px}
+  .dual .track{position:absolute;left:0;right:0;top:11px;height:6px;background:var(--panel2);border-radius:3px}
+  .dual .fill{position:absolute;top:11px;height:6px;background:var(--accent);opacity:.55;border-radius:3px}
+  .dual input{position:absolute;left:0;top:0;pointer-events:none}
+  .dual input::-webkit-slider-runnable-track{background:transparent}
+  .dual input::-moz-range-track{background:transparent}
+  .dual input::-webkit-slider-thumb{pointer-events:auto}
+  .dual input::-moz-range-thumb{pointer-events:auto}
+  .ticks{display:flex;justify-content:space-between;font-size:11px;color:var(--mute);margin-top:4px}
+
+  .hist{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:16px;min-height:26px}
+  .chip{font-size:12px;padding:4px 9px;border-radius:999px;background:var(--panel2);color:var(--mute);border:1px solid var(--line)}
+  .chip b{color:var(--ink);font-weight:600}
+  .note{font-size:12px;color:var(--mute);line-height:1.5;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Interval <span>Harmony</span> Trainer</h1>
+    <div class="sub">Random note, then its interval, forever.</div>
+  </header>
+
+  <section class="stage">
+    <div class="now">
+      <div><div class="noteBox" id="baseNote">–</div><div class="noteCap">Note</div></div>
+      <div class="ivLabel" id="ivNow">–<small id="ivAdj"></small></div>
+      <div><div class="noteBox" id="ivNote">–</div><div class="noteCap">Interval</div></div>
+    </div>
+    <div class="kb" id="kb"></div>
+    <div class="row">
+      <button class="play" id="playBtn">▶ Start</button>
+      <span class="hint">Spacebar starts and stops</span>
+    </div>
+    <div class="hist" id="hist"></div>
+  </section>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Interval <span class="val" id="ivVal"></span></h2>
+      <input type="range" id="ivSlider" min="-11" max="11" step="1" value="4">
+      <div class="ticks"><span>M7 ↓</span><span>Unison</span><span>M7 ↑</span></div>
+      <div class="note" id="ivNote2"></div>
+      <label class="f" for="every">Switch to a new interval</label>
+      <select id="every">
+        <option value="0">Never (keep this interval)</option>
+        <option value="5">Every 5 notes</option>
+        <option value="10">Every 10 notes</option>
+        <option value="20">Every 20 notes</option>
+      </select>
+    </div>
+
+    <div class="card">
+      <h2>Tempo <span class="val" id="bpmVal">𝅗𝅥 = 40</span></h2>
+      <input type="range" id="bpm" min="15" max="100" step="1" value="40">
+      <div class="ticks"><span>𝅗𝅥 = 15</span><span>𝅗𝅥 = 100</span></div>
+      <div class="note">Each step is a half note: the note, then the added interval.</div>
+      <h2 style="margin-top:16px">Volume <span class="val" id="volVal"></span></h2>
+      <input type="range" id="vol" min="0" max="100" step="1" value="70">
+    </div>
+
+    <div class="card">
+      <h2>Range <span class="val" id="rangeVal"></span></h2>
+      <div class="dual">
+        <div class="track"></div><div class="fill" id="rangeFill"></div>
+        <input type="range" id="lo" min="28" max="96" step="1" value="48">
+        <input type="range" id="hi" min="28" max="96" step="1" value="72">
+      </div>
+      <div class="ticks"><span>E1</span><span>C7</span></div>
+      <div class="note">Both notes of each pair stay inside this range.</div>
+    </div>
+
+    <div class="card">
+      <h2>Scale</h2>
+      <label class="f" for="family">Scale family</label>
+      <select id="family"></select>
+      <div id="modeWrap">
+        <div class="selRow">
+          <div><label class="f" for="root">Root</label><select id="root"></select></div>
+          <div><label class="f" for="mode">Mode</label><select id="mode"></select></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- Data ----------
+const IV_NAMES = ["Unison","m2","M2","m3","M3","P4","Tritone","P5","m6","M6","m7","M7"];
+const ROOTS = ["C","D♭","D","E♭","E","F","G♭","G","A♭","A","B♭","B"];
+const SHARP = ["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];
+const FLAT  = ["C","D♭","D","E♭","E","F","G♭","G","A♭","A","B♭","B"];
+const FLAT_ROOTS = new Set([1,3,5,6,8,10]); // Db Eb F Gb Ab Bb
+
+function rotate(parent, k){
+  const n = parent.length, out = [];
+  for(let i=0;i<n;i++) out.push((parent[(i+k)%n] - parent[k] + 12) % 12);
+  return out;
+}
+const MAJOR=[0,2,4,5,7,9,11], MELMIN=[0,2,3,5,7,9,11], HARMIN=[0,2,3,5,7,8,11];
+const FAMILIES = [
+  {name:"Chromatic", modes:[{name:"Chromatic", set:[0,1,2,3,4,5,6,7,8,9,10,11]}]},
+  {name:"Church modes", modes:["Ionian (Major)","Dorian","Phrygian","Lydian","Mixolydian","Aeolian (Nat. minor)","Locrian"].map((n,i)=>({name:n,set:rotate(MAJOR,i)}))},
+  {name:"Melodic minor modes", modes:["Melodic minor","Dorian ♭2","Lydian augmented","Lydian dominant","Mixolydian ♭6","Locrian ♮2","Altered"].map((n,i)=>({name:n,set:rotate(MELMIN,i)}))},
+  {name:"Harmonic minor modes", modes:["Harmonic minor","Locrian ♮6","Ionian ♯5","Dorian ♯4","Phrygian dominant","Lydian ♯2","Altered ♭♭7"].map((n,i)=>({name:n,set:rotate(HARMIN,i)}))},
+  {name:"Symmetric", modes:[
+    {name:"Whole tone", set:[0,2,4,6,8,10]},
+    {name:"Diminished (half–whole)", set:[0,1,3,4,6,7,9,10]},
+    {name:"Diminished (whole–half)", set:[0,2,3,5,6,8,9,11]},
+  ]},
+];
+
+// ---------- State ----------
+const S = {family:0, mode:0, root:0, lo:48, hi:72, iv:4, hbpm:40, vol:70, every:10};
+try{ Object.assign(S, JSON.parse(localStorage.getItem("ivTrainer2")||"{}")); }catch(e){}
+function save(){ try{ localStorage.setItem("ivTrainer2", JSON.stringify(S)); }catch(e){} }
+
+const $ = id => document.getElementById(id);
+function noteName(m){
+  const names = (S.family!==0 && FLAT_ROOTS.has(S.root)) ? FLAT : SHARP;
+  return names[((m%12)+12)%12] + (Math.floor(m/12)-1);
+}
+function curSet(){ return FAMILIES[S.family].modes[S.mode].set; }
+function isChromatic(){ return S.family===0; }
+function scaleNotes(){
+  const set = new Set(curSet().map(x=>(x+S.root)%12)), out=[];
+  for(let m=0;m<128;m++) if(set.has(m%12)) out.push(m);
+  return out;
+}
+function ivText(s){ return s===0 ? "Unison" : IV_NAMES[Math.abs(s)] + (s>0?" ↑":" ↓"); }
+
+// ---------- Interval fitting ----------
+// generic size class: 0 unison, 2 second, 3 third, 4 fourth, 5 fifth, 6 sixth, 7 seventh. Tritone belongs to 4th and 5th.
+function classes(n){
+  if(n===0) return [1]; if(n<=2) return [2]; if(n<=4) return [3]; if(n===5) return [4];
+  if(n===6) return [4,5]; if(n===7) return [5]; if(n<=9) return [6]; if(n<=11) return [7]; return [8];
+}
+const pick = a => a[Math.floor(Math.random()*a.length)];
+
+function fitInterval(base, s){
+  if(s===0) return base;
+  const dir = Math.sign(s), size = Math.abs(s);
+  if(isChromatic()) return base + s;
+  const notes = scaleNotes();
+  // Snap to the nearest scale tone that keeps the same interval size (3rd stays 3rd, 7th stays 7th, never a 3rd↔4th or 7th→octave).
+  const inScale = n => notes.includes(base + dir*n);
+  if(inScale(size)) return base + dir*size;
+  const want = classes(size);
+  for(const d of [1,2]){
+    const cands = [size-d,size+d].filter(n=>n>0 && n<12 && inScale(n) && classes(n).some(c=>want.includes(c)));
+    if(cands.length) return base + dir*pick(cands);
+  }
+  for(const d of [1,2]){
+    const cands = [size-d,size+d].filter(n=>n>0 && n<12 && inScale(n));
+    if(cands.length) return base + dir*pick(cands);
+  }
+  return base + s;
+}
+
+let lastBase = null, recentPCs = [], lastIvPC = -1; // pitch classes of the last few notes heard
+function rootsInRange(){ const r=[]; for(let m=S.lo;m<=S.hi;m++) if(m%12===S.root) r.push(m); return r; }
+function tonicTriad(){
+  const set=curSet(); let third, fifth;
+  if(set.length===7){ third=set[2]; fifth=set[4]; }
+  else { third = set.includes(4)?4:3; fifth = set.includes(7)?7:((third===4&&set.includes(8))?8:6); }
+  const target=(S.lo+S.hi)/2 - 4;
+  const r = rootsInRange().sort((a,b)=>Math.abs(a-target)-Math.abs(b-target))[0];
+  return [r, r+third, r+fifth];
+}
+function choosePair(forceRoot){
+  let pool = (isChromatic()? Array.from({length:128},(_,i)=>i) : scaleNotes()).filter(m=>m>=S.lo && m<=S.hi);
+  if(forceRoot){ const r=rootsInRange(); if(r.length) pool=r; }
+  if(!pool.length) return null;
+  let best=null;
+  // Row-like: a new note avoids the pitch classes of the last N notes, where N is a few less than
+  // the number of pitch classes available, so it nearly runs a row but the last notes stay unpredictable.
+  const nPC = new Set(pool.map(m=>m%12)).size;
+  const mem = Math.max(1, nPC-3);
+  for(let m=mem; m>=0 && !best; m--){
+    const avoid = new Set(recentPCs.slice(-m));
+    if(m===0) avoid.clear();
+    for(let tries=0;tries<120;tries++){
+      const b = pick(pool);
+      if(!forceRoot && (avoid.has(b%12) || b===lastBase || b%12===lastIvPC)) continue;
+      const t = fitInterval(b, S.iv);
+      if(t<S.lo || t>S.hi) continue;
+      best={b,t}; break;
+    }
+  }
+  if(!best){ const b=pick(pool); best={b, t:fitInterval(b,S.iv)}; }
+  lastBase = best.b; lastIvPC = best.t%12;
+  recentPCs.push(best.b%12); if(recentPCs.length>12) recentPCs.shift();
+  return best;
+}
+
+// ---------- Audio ----------
+let ctx=null, master=null;
+function initAudio(){
+  if(ctx) return;
+  ctx = new (window.AudioContext||window.webkitAudioContext)();
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value=-14; comp.ratio.value=4;
+  master = ctx.createGain(); master.gain.value = (S.vol/100)**2;
+  master.connect(comp); comp.connect(ctx.destination);
+}
+function playNote(m, t, dur, amp=1){
+  const f = 440*Math.pow(2,(m-69)/12);
+  const o1=ctx.createOscillator(), o2=ctx.createOscillator(), o3=ctx.createOscillator();
+  o1.type="triangle"; o1.frequency.value=f;
+  o2.type="sine"; o2.frequency.value=f*2;
+  o3.type="sine"; o3.frequency.value=f;
+  const g2=ctx.createGain(); g2.gain.value=.12;
+  const g3=ctx.createGain(); g3.gain.value=.5;
+  const lp=ctx.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=Math.min(9000, 1800+f*3); lp.Q.value=.4;
+  const env=ctx.createGain();
+  const end = t + Math.max(.08, dur-.04);
+  env.gain.setValueAtTime(0,t);
+  env.gain.linearRampToValueAtTime(.32*amp,t+.012);
+  env.gain.setTargetAtTime(.17*amp,t+.012,.25);
+  env.gain.setTargetAtTime(0,end,.06);
+  o1.connect(lp); o2.connect(g2).connect(lp); o3.connect(g3).connect(lp);
+  lp.connect(env).connect(master);
+  [o1,o2,o3].forEach(o=>{o.start(t); o.stop(end+.5);});
+}
+
+// ---------- Transport ----------
+let running=false, timer=null, nextTime=0, beat=0, cur=null, needTriad=true, rootNext=false;
+const spb = () => 60/S.hbpm; // one step = one half note
+function at(t, fn){ setTimeout(fn, Math.max(0,(t-ctx.currentTime)*1000)); }
+
+let queue=[], pairCount=0;
+function randomNewInterval(){
+  const opts=[]; for(let i=-11;i<=11;i++) if(i!==0 && i!==S.iv) opts.push(i);
+  return pick(opts);
+}
+function refill(){
+  if(needTriad && !isChromatic()){
+    needTriad=false; rootNext=true;
+    const tri = tonicTriad();
+    queue.push(t=>{ tri.forEach(m=>playNote(m, t, spb()*2, .62)); at(t, ()=>running&&showTriad(tri)); }, ()=>{});
+    return;
+  }
+  needTriad=false;
+  if(S.every>0 && pairCount>=S.every){
+    pairCount=0;
+    const newIv = randomNewInterval();
+    S.iv = newIv; save();
+    const p = choosePair(!isChromatic());
+    queue.push(
+      t=>{ click(t, true); at(t, ()=>running&&showClick(1)); },
+      t=>{ click(t, false); at(t, ()=>running&&showClick(2)); },
+      t=>{
+        // new interval: base note held, harmony note flickers on/off fast
+        const len = spb()*2;
+        playNote(p.b, t, len);
+        const period = Math.min(.26, spb()/4), on = period*.55;
+        for(let x=t; x < t+len-period*.5; x+=period) playNote(p.t, x, on, .8);
+        at(t, ()=>{ if(!running) return; $("ivSlider").value=newIv; refreshIv(); showDemo(p, newIv, "new interval", [p.b], [p.t]); flicker(p.t, t, len, period, on); });
+      },
+      ()=>{},
+    );
+    return;
+  }
+  const p = choosePair(rootNext); rootNext=false; if(!p) { queue.push(()=>{}); return; }
+  pairCount++;
+  const ivReq = S.iv;
+  queue.push(
+    t=>{ playNote(p.b, t, spb()*2); at(t, ()=>running&&showBase(p, ivReq)); },
+    t=>{ playNote(p.t, t, spb()); at(t, ()=>running&&showIv(p)); },
+  );
+}
+function scheduleBeat(t){
+  if(!queue.length) refill();
+  queue.shift()(t);
+}
+let noiseBuf=null;
+function click(t, accent){
+  if(!noiseBuf){ noiseBuf=ctx.createBuffer(1, ctx.sampleRate*.05, ctx.sampleRate); const d=noiseBuf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,4); }
+  const src=ctx.createBufferSource(); src.buffer=noiseBuf;
+  const f=ctx.createBiquadFilter(); f.type="highpass"; f.frequency.value=accent?5000:3200;
+  const g=ctx.createGain(); g.gain.value=accent?.9:.6;
+  src.connect(f).connect(g).connect(master); src.start(t);
+}
+function tick(){
+  while(nextTime < ctx.currentTime + .12){
+    scheduleBeat(nextTime);
+    nextTime += spb(); beat++;
+  }
+}
+function start(){
+  initAudio(); ctx.resume();
+  running=true; beat=0; nextTime=ctx.currentTime+.08; lastBase=null; recentPCs=[]; lastIvPC=-1; needTriad=true; rootNext=false; queue=[]; pairCount=0;
+  timer=setInterval(tick,25); tick();
+  $("playBtn").textContent="■ Stop"; $("playBtn").classList.add("on");
+}
+function stop(){
+  running=false; clearInterval(timer);
+  if(master){ const now=ctx.currentTime; master.gain.setTargetAtTime(0,now,.03); setTimeout(()=>{ if(!running) master.gain.setTargetAtTime((S.vol/100)**2,ctx.currentTime,.01); },250); }
+  $("playBtn").textContent="▶ Start"; $("playBtn").classList.remove("on");
+  setLit([],[]); $("baseNote").classList.remove("lit"); $("ivNote").classList.remove("lit");
+}
+$("playBtn").onclick = () => running ? stop() : start();
+document.addEventListener("keydown", e=>{
+  if(e.code==="Space" && document.activeElement.tagName!=="SELECT"){ e.preventDefault(); running?stop():start(); }
+});
+
+// ---------- Display ----------
+const hist=[];
+function showDemo(p, iv, what, bs, ivs){
+  $("ivNow").firstChild.nodeValue = "New: " + ivText(p.t-p.b);
+  $("ivAdj").textContent = what;
+  $("baseNote").textContent = noteName(p.b);
+  $("ivNote").textContent = ivs.length ? noteName(p.t) : "·";
+  $("baseNote").classList.toggle("lit", bs.length>0); $("ivNote").classList.toggle("lit", ivs.length>0);
+  setLit(bs, ivs);
+}
+function flicker(m, t0, len, period, on){
+  const step=()=>{
+    if(!running) return;
+    const e=ctx.currentTime-t0; if(e>=len){ return; }
+    const lit = (e%period) < on;
+    keyEls[m] && keyEls[m].classList.toggle("iv", lit);
+    $("ivNote").classList.toggle("lit", lit);
+    requestAnimationFrame(step);
+  }; step();
+}
+function showClick(n){
+  $("ivNow").firstChild.nodeValue = "Switching…";
+  $("ivAdj").textContent = n===1 ? "1" : "1  2";
+  $("baseNote").textContent="·"; $("ivNote").textContent="·";
+  $("baseNote").classList.remove("lit"); $("ivNote").classList.remove("lit"); setLit([],[]);
+}
+function showTriad(tri){
+  $("baseNote").textContent = noteName(tri[0]).replace(/-?\d+$/,"");
+  $("ivNote").textContent = "·";
+  $("baseNote").classList.add("lit"); $("ivNote").classList.remove("lit");
+  $("ivNow").firstChild.nodeValue = "Tonic triad";
+  $("ivAdj").textContent = tri.map(noteName).join("  ");
+  setLit(tri,[]);
+}
+function showBase(p, req){
+  $("baseNote").textContent = noteName(p.b);
+  $("ivNote").textContent = "·";
+  $("baseNote").classList.add("lit"); $("ivNote").classList.remove("lit");
+  const actual = p.t - p.b;
+  $("ivNow").firstChild.nodeValue = ivText(actual);
+  $("ivAdj").textContent = (actual!==req) ? "adjusted from " + ivText(req) : "";
+  setLit([p.b],[]);
+}
+function showIv(p){
+  $("ivNote").textContent = noteName(p.t);
+  $("ivNote").classList.add("lit");
+  setLit([p.b],[p.t]);
+  hist.unshift(p); if(hist.length>8) hist.pop();
+  $("hist").innerHTML = hist.map(h=>`<span class="chip"><b>${noteName(h.b)}</b> → ${noteName(h.t)}</span>`).join("");
+}
+
+let keyEls = {};
+function buildKeyboard(){
+  const kb=$("kb"); kb.innerHTML=""; keyEls={};
+  const isBlack = m => [1,3,6,8,10].includes(m%12);
+  let lo=S.lo, hi=S.hi;
+  // pad so we start/end on white keys and show a little context
+  lo = Math.max(21, lo-2); hi = Math.min(108, hi+2);
+  while(isBlack(lo)) lo--; while(isBlack(hi)) hi++;
+  const whites=[]; for(let m=lo;m<=hi;m++) if(!isBlack(m)) whites.push(m);
+  const w = 100/whites.length;
+  const pcs = new Set(curSet().map(x=>(x+S.root)%12));
+  whites.forEach((m,i)=>{
+    const d=document.createElement("div"); d.className="wk";
+    d.style.left=(i*w)+"%"; d.style.width=w+"%";
+    decorate(d,m,pcs); kb.appendChild(d); keyEls[m]=d;
+  });
+  for(let m=lo;m<=hi;m++) if(isBlack(m)){
+    const i = whites.indexOf(m-1); if(i<0) continue;
+    const d=document.createElement("div"); d.className="bk";
+    d.style.left=((i+1)*w - w*0.32)+"%"; d.style.width=(w*0.64)+"%";
+    decorate(d,m,pcs); kb.appendChild(d); keyEls[m]=d;
+  }
+}
+function decorate(d,m,pcs){
+  if(m<S.lo||m>S.hi) d.classList.add("off");
+  else if(!isChromatic() && pcs.has(m%12)) d.classList.add("inScale");
+}
+function setLit(bs, ivs){
+  Object.values(keyEls).forEach(e=>e.classList.remove("base","iv"));
+  bs.forEach(m=>keyEls[m]&&keyEls[m].classList.add("base"));
+  ivs.forEach(m=>keyEls[m]&&keyEls[m].classList.add("iv"));
+}
+
+// ---------- Controls ----------
+function fillSelect(sel, items, val){ sel.innerHTML = items.map((t,i)=>`<option value="${i}">${t}</option>`).join(""); sel.value=val; }
+fillSelect($("family"), FAMILIES.map(f=>f.name), S.family);
+fillSelect($("root"), ROOTS, S.root);
+function refreshModes(){
+  if(S.mode >= FAMILIES[S.family].modes.length) S.mode=0;
+  fillSelect($("mode"), FAMILIES[S.family].modes.map(m=>m.name), S.mode);
+  $("modeWrap").style.display = isChromatic() ? "none" : "";
+}
+function refreshIv(){
+  $("ivVal").textContent = ivText(S.iv);
+  $("ivNote2").textContent = isChromatic()
+    ? "Chromatic: the interval is played exactly."
+    : "In a scale, the interval snaps to the nearest scale tone of the same size: a 3rd stays a 3rd, a 7th stays a 7th.";
+}
+function refreshRange(){
+  $("rangeVal").textContent = noteName(S.lo)+" – "+noteName(S.hi);
+  const mn=28, mx=96;
+  $("rangeFill").style.left = ((S.lo-mn)/(mx-mn)*100)+"%";
+  $("rangeFill").style.width = ((S.hi-S.lo)/(mx-mn)*100)+"%";
+  buildKeyboard();
+}
+$("family").onchange = e=>{ S.family=+e.target.value; S.mode=0; needTriad=true; refreshModes(); refreshIv(); buildKeyboard(); refreshRange(); save(); };
+$("mode").onchange = e=>{ S.mode=+e.target.value; needTriad=true; buildKeyboard(); save(); };
+$("root").onchange = e=>{ S.root=+e.target.value; needTriad=true; refreshRange(); save(); };
+$("ivSlider").value=S.iv;
+$("ivSlider").oninput = e=>{ S.iv=+e.target.value; pairCount=0; refreshIv(); save(); };
+$("every").value=S.every; $("every").onchange=e=>{ S.every=+e.target.value; pairCount=0; save(); };
+$("bpm").value=S.hbpm; $("bpmVal").textContent="𝅗𝅥 = "+S.hbpm;
+$("bpm").oninput = e=>{ S.hbpm=+e.target.value; $("bpmVal").textContent="𝅗𝅥 = "+S.hbpm; save(); };
+$("vol").value=S.vol; $("volVal").textContent=S.vol+"%";
+$("vol").oninput = e=>{ S.vol=+e.target.value; $("volVal").textContent=S.vol+"%"; if(master) master.gain.setTargetAtTime((S.vol/100)**2, ctx.currentTime, .02); save(); };
+const GAP=12;
+$("lo").value=S.lo; $("hi").value=S.hi;
+$("lo").oninput = e=>{ let v=+e.target.value; if(v>S.hi-GAP) v=S.hi-GAP; e.target.value=v; S.lo=v; refreshRange(); save(); };
+$("hi").oninput = e=>{ let v=+e.target.value; if(v<S.lo+GAP) v=S.lo+GAP; e.target.value=v; S.hi=v; refreshRange(); save(); };
+// keep the low thumb grabbable when both are near the top
+$("lo").addEventListener("pointerdown",()=>{ $("lo").style.zIndex=3; $("hi").style.zIndex=2; });
+$("hi").addEventListener("pointerdown",()=>{ $("hi").style.zIndex=3; $("lo").style.zIndex=2; });
+
+refreshModes(); refreshIv(); refreshRange();
+</script>
+</body>
+</html>

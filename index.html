@@ -66,7 +66,8 @@
   #lyrics .note { font-size: 18px; color: var(--dim); }
 
   /* transport */
-  #transportCard { padding: 14px 18px 12px; }
+  #transportCard { padding: 14px 18px 12px; flex-shrink: 0; }
+  #songHead { flex-shrink: 0; }
   #progressRow { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
   #progressRow .skip { padding: 6px 10px; font-size: 14px; border-radius: 10px; font-variant-numeric: tabular-nums; }
   #progress { flex: 1; height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; position: relative; cursor: pointer; }
@@ -133,12 +134,22 @@
     #transport .icon { width: 44px; height: 44px; }
     #transport .pill { min-width: 0; height: 44px; padding: 0 12px; font-size: 15px; }
     #singBtn { width: 68px; height: 68px; font-size: 14px; }
-    body[data-view="player"] #side { max-height: 32vh; overflow-y: auto; }
+    body[data-view="player"] #side { display: none; }
+    body[data-view="player"].showMix #side { display: flex; }
+    body[data-view="player"].showMix #app { display: flex; flex-direction: column; overflow-y: auto; }
+    body.showMix #player, body.showMix #side { flex: none; }
+    body.showMix #lyricsCard { display: none; }
+    #mixBtn { display: inline-block !important; }
+    #songHead { padding: 8px 10px; gap: 8px; }
+    #songHead button { padding: 8px 10px; font-size: 15px; }
+    #pTitle .t { font-size: 18px; }
     #side > .card { flex: none; }
     header h1 { font-size: 19px; }
     header button { padding: 8px 12px; font-size: 15px; }
   }
   @media (min-width: 761px) { #backBtn { display: none; } }
+  #mixBtn { display: none; }
+  #mixBtn.on { background: var(--accent); color: #1a1200; border-color: var(--accent); }
 
   #errBar { position: fixed; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 12px); z-index: 30;
     background: #4a1517; border: 1px solid var(--rec); color: #fff; border-radius: 12px; padding: 12px 16px; font-size: 15px; }
@@ -164,7 +175,16 @@
   #drive .big { font-size: 40px; font-weight: 800; border-radius: 24px; }
   #dSing { background: var(--ok); border-color: var(--ok); color: #fff; }
   #dSing.on { background: var(--rec); border-color: var(--rec); }
-  #dRow { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  #dRow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  #dTop { min-width: 0; }
+  #dSong { min-width: 0; }
+  #drive .big { min-width: 0; padding: 0; }
+  @media (max-width: 760px) {
+    #dSong { font-size: 20px; }
+    #drive .big { font-size: 30px; }
+    #dRow { gap: 10px; }
+    #dStatus { font-size: 15px; }
+  }
   #dStatus { text-align: center; font-size: 20px; color: var(--dim); }
 </style>
 </head>
@@ -191,6 +211,7 @@
       <button id="backBtn">‹ Songs</button>
       <div id="pTitle"><div class="t">No song selected</div><div class="a">Pick a song from the list</div></div>
       <button id="lyrBtn">Find lyrics</button>
+      <button id="mixBtn">Mixer</button>
     </div>
     <div id="lyricsCard" class="card">
       <div id="lyrics"><div class="placeholder">Lyrics appear here</div></div>
@@ -218,6 +239,7 @@
     <section class="card">
       <h2>Mixer</h2>
       <div class="body">
+        <div class="hint" style="margin:0 0 8px">Track and Voice set the listen-back mix. While singing, use the iPad's volume buttons.</div>
         <div class="row"><label>Track</label><input id="trackVol" type="range" min="0" max="1" step="0.01"><output id="trackVolOut"></output></div>
         <div class="row"><label>Voice</label><input id="voiceVol" type="range" min="0" max="3" step="0.01"><output id="voiceVolOut"></output></div>
         <div class="row"><label>Sync</label><input id="latency" type="range" min="-50" max="300" step="5"><output id="latencyOut"></output></div>
@@ -569,8 +591,15 @@ $("progress").onclick = e => {
 $("restartBtn").onclick = () => seekTo(0);
 
 /* ---------- singing (record voice only; track plays in headphones) ---------- */
+/* Tell iPadOS what kind of audio this is (Safari 17+). "playback" = full-quality music,
+   "play-and-record" only while recording. Without this the iPad can stay in call-style audio. */
+function setSession(type) {
+  try { if (navigator.audioSession && navigator.audioSession.type !== type) navigator.audioSession.type = type; } catch (_) {}
+}
+setSession("playback");
 async function getMic() {
   if (micStream && micStream.active) return micStream;
+  setSession("play-and-record");
   micStream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
   });
@@ -590,6 +619,7 @@ function releaseMic(delay = 0) {
     if (mode === "singing" || !micStream) return;
     micStream.getTracks().forEach(t => { t.onended = null; t.stop(); });
     micStream = null; micWarm = false;
+    setSession("playback");
   }, delay);
 }
 function pickMime() {
@@ -720,6 +750,7 @@ function setTrackLevel() { track.volume = Math.max(0, Math.min(1, settings.track
 async function playTrack() {
   if (!cur) return;
   if (micStream) { releaseMic(0); await sleep(300); }
+  setSession("playback");
   if (mode === "track") { track.pause(); mode = "idle"; setButtons(); return; }
   stopAll();
   trackOut();
@@ -784,6 +815,7 @@ async function listenTake(take, startAt) {
   }
   if (startAt == null) startAt = take.start;
   releaseMic(0); await sleep(micStream ? 300 : 0);   // full-quality audio for playback
+  setSession("playback");
   if (!take.blob || !cur.audio) { status("This take's audio is missing."); return; }
   stopAll();
   status("Loading take…");
@@ -943,6 +975,12 @@ async function searchLyrics(e) {
   }
 }
 $("lyrBtn").onclick = openFinder;
+if (matchMedia("(max-width: 760px)").matches) $("lyrBtn").textContent = "Find";
+$("mixBtn").onclick = () => {
+  const on = document.body.classList.toggle("showMix");
+  $("mixBtn").classList.toggle("on", on);
+  $("mixBtn").textContent = on ? "Lyrics" : "Mixer";
+};
 $("fClose").onclick = () => $("finder").classList.add("hidden");
 $("fForm").onsubmit = searchLyrics;
 $("finder").onclick = e => { if (e.target.id === "finder") $("finder").classList.add("hidden"); };
